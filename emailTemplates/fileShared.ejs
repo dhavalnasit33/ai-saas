@@ -1,0 +1,29 @@
+<h2 style="margin-top:0;">Shared with you: <%= itemName %> 📂</h2>
+
+<p>Hello,</p>
+
+<p>
+  <strong><%= senderName %></strong> has shared a <strong><%= type %></strong> with you on 
+  <strong>OneChat AI</strong>.
+</p>
+
+<div style="text-align:center; margin:30px 0;">
+  <a href="<%= accessUrl %>" 
+     style="background:#1967D2; color:#fff; padding:12px 28px; 
+     text-decoration:none; border-radius:6px; font-weight:bold; display:inline-block;">
+    View <%= type %>
+  </a>
+</div>
+
+<% if (isGuest) { %>
+  <p style="background: #fdf2f2; padding: 10px; border-left: 4px solid #d32f2f; font-size: 14px;">
+    <strong>New to OneChat AI?</strong> You can view this shared item as a guest. 
+    To save it permanently to your drive, <a href="<%= signupUrl %>">create an account here</a>.
+  </p>
+<% } else { %>
+  <p style="font-size: 14px; color: #666;">
+    This item is now accessible directly in your storage dashboard.
+  </p>
+<% } %>
+
+<p>Best regards,<br /><strong>OneChat AI Team</strong></p>
