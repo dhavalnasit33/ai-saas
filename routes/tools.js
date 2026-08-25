@@ -4098,6 +4098,7 @@ router.post(
 
     let {
       prompt,
+      model = "gemini-omni-flash",
       modelType = "text-to-video",
       duration = "3",
       aspectRatio = "16:9",
@@ -4182,59 +4183,100 @@ router.post(
         }
       }
 
-      // 4. Select API key and endpoint based on modelType
+      // 4. Select API key, endpoint, and payload structure based on model & modelType
       let falApiKey = "";
       let falUrl = "";
+      let payload = {};
 
-      switch (modelType) {
-        case "text-to-video":
-          falApiKey = process.env.FAL_KEY_GEMINI_TEXT_TO_VIDEO;
-          falUrl = "https://queue.fal.run/google/gemini-omni-flash";
-          break;
-        case "image-to-video":
-          falApiKey = process.env.FAL_KEY_GEMINI_IMAGE_TO_VIDEO;
-          falUrl = "https://queue.fal.run/google/gemini-omni-flash/image-to-video";
-          break;
-        case "reference-to-video":
-          falApiKey = process.env.FAL_KEY_GEMINI_REFERENCE_TO_VIDEO;
-          falUrl = "https://queue.fal.run/google/gemini-omni-flash/reference-to-video";
-          break;
-        case "edit":
-          falApiKey = process.env.FAL_KEY_GEMINI_EDIT;
-          falUrl = "https://queue.fal.run/google/gemini-omni-flash/edit";
-          break;
-        default:
-          return res.status(400).json({ success: false, error: "Invalid model type specified." });
-      }
+      const isVeoReference =
+        model === "veo-3.1-fast" ||
+        model === "veo" ||
+        model === "fal-ai/veo3.1/fast/reference-to-video" ||
+        modelType === "veo-reference-to-video";
 
-      if (!falApiKey) {
-        throw new Error(`Missing Fal AI API credentials for model: ${modelType}`);
-      }
+      if (isVeoReference) {
+        falApiKey =
+          process.env.FAL_KEY_VEO_REFERENCE_TO_VIDEO ||
+          "7cb56588-9c70-4d47-af8d-c1cd96ebf289:303c23f2330766f9e58ad863aadd5533";
+        falUrl = "https://queue.fal.run/fal-ai/veo3.1/fast/reference-to-video";
 
-      // 5. Construct payload
-      const payload = {
-        prompt: prompt.trim(),
-        aspect_ratio: aspectRatio,
-        duration: durationSeconds,
-      };
-
-      if (modelType === "image-to-video") {
-        if (uploadedImageUrls.length === 0) {
-          return res.status(400).json({ success: false, error: "An input image is required for image-to-video." });
+        let formattedDuration = "8s";
+        if (typeof duration === "string" && duration.trim() !== "") {
+          const cleanDuration = duration.trim().toLowerCase();
+          if (cleanDuration === "5s" || cleanDuration === "5") {
+            formattedDuration = "5s";
+          } else {
+            formattedDuration = "8s"; // Default standard for Fal Veo 3.1
+          }
+        } else if (typeof duration === "number" && duration <= 5) {
+          formattedDuration = "5s";
+        } else {
+          formattedDuration = "8s";
         }
-        payload.image_url = uploadedImageUrls[0];
-      } else if (modelType === "reference-to-video") {
+
+        payload = {
+          prompt: prompt.trim(),
+          aspect_ratio: aspectRatio || "16:9",
+          duration: formattedDuration,
+        };
+
         if (uploadedImageUrls.length > 0) {
           payload.image_urls = uploadedImageUrls;
+          payload.image_url = uploadedImageUrls[0];
         }
         if (uploadedVideoUrl) {
           payload.video_url = uploadedVideoUrl;
         }
-      } else if (modelType === "edit") {
-        if (!uploadedVideoUrl) {
-          return res.status(400).json({ success: false, error: "An input video is required for video editing." });
+      } else {
+        switch (modelType) {
+          case "text-to-video":
+            falApiKey = process.env.FAL_KEY_GEMINI_TEXT_TO_VIDEO;
+            falUrl = "https://queue.fal.run/google/gemini-omni-flash";
+            break;
+          case "image-to-video":
+            falApiKey = process.env.FAL_KEY_GEMINI_IMAGE_TO_VIDEO;
+            falUrl = "https://queue.fal.run/google/gemini-omni-flash/image-to-video";
+            break;
+          case "reference-to-video":
+            falApiKey = process.env.FAL_KEY_GEMINI_REFERENCE_TO_VIDEO;
+            falUrl = "https://queue.fal.run/google/gemini-omni-flash/reference-to-video";
+            break;
+          case "edit":
+            falApiKey = process.env.FAL_KEY_GEMINI_EDIT;
+            falUrl = "https://queue.fal.run/google/gemini-omni-flash/edit";
+            break;
+          default:
+            return res.status(400).json({ success: false, error: "Invalid model type specified." });
         }
-        payload.video_url = uploadedVideoUrl;
+
+        payload = {
+          prompt: prompt.trim(),
+          aspect_ratio: aspectRatio,
+          duration: durationSeconds,
+        };
+
+        if (modelType === "image-to-video") {
+          if (uploadedImageUrls.length === 0) {
+            return res.status(400).json({ success: false, error: "An input image is required for image-to-video." });
+          }
+          payload.image_url = uploadedImageUrls[0];
+        } else if (modelType === "reference-to-video") {
+          if (uploadedImageUrls.length > 0) {
+            payload.image_urls = uploadedImageUrls;
+          }
+          if (uploadedVideoUrl) {
+            payload.video_url = uploadedVideoUrl;
+          }
+        } else if (modelType === "edit") {
+          if (!uploadedVideoUrl) {
+            return res.status(400).json({ success: false, error: "An input video is required for video editing." });
+          }
+          payload.video_url = uploadedVideoUrl;
+        }
+      }
+
+      if (!falApiKey) {
+        throw new Error(`Missing Fal AI API credentials for model: ${model || modelType}`);
       }
 
   
@@ -4438,12 +4480,16 @@ router.post(
       // 5. Construct Payload (Veo 3.1 requires duration to be '8s')
       let formattedDuration = "8s";
       if (typeof duration === "string" && duration.trim() !== "") {
-        let cleanDuration = duration.trim();
-        if (!cleanDuration.endsWith("s")) {
-          cleanDuration = `${cleanDuration}s`;
+        const cleanDuration = duration.trim().toLowerCase();
+        if (cleanDuration === "5s" || cleanDuration === "5") {
+          formattedDuration = "5s";
+        } else {
+          formattedDuration = "8s";
         }
-        // Veo 3.1 fast reference-to-video specifically supports '8s' or '5s'
-        formattedDuration = cleanDuration === "8s" ? "8s" : "8s";
+      } else if (typeof duration === "number" && duration <= 5) {
+        formattedDuration = "5s";
+      } else {
+        formattedDuration = "8s";
       }
 
       const payload = {

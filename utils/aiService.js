@@ -4327,8 +4327,10 @@ class AIService {
             finalDurationSeconds = 5; // Safe fallback for Veo 2.0
           }
         } else {
-          // Veo 3.0 / 3.1 models support strictly 4, 6, 8
-          if ([4, 6, 8].includes(parsed)) {
+          // Veo 3.0 / 3.1 models support 4, 6, 8 or extended durations (15s, 30s, 45s, 60s, 90s, 120s)
+          if ([4, 6, 8, 15, 30, 45, 60, 90, 120].includes(parsed)) {
+            finalDurationSeconds = parsed;
+          } else if (parsed > 0) {
             finalDurationSeconds = parsed;
           } else {
             finalDurationSeconds = 4; // Safe fallback for Veo 3
