@@ -4245,12 +4245,20 @@ router.post(
         modelType === "veo-reference-to-video";
 
       if (isVeoReference) {
-        // Use Google Native Veo 3.1 Fast API (Auth key provided by client)
-        const googleVeoKey =
-          process.env.GOOGLE_VEO_BASE_API_KEY 
+        const requestedSec = parseInt(duration) || 8;
+        const totalDurationSec =
+          parseInt(req.body.totalDuration) || requestedSec;
 
-        // 👇 Google Veo Fast supports duration strictly between 4s and 8s
-        let durationSec = parseInt(duration) || 8;
+        // If total video length is > 8s (e.g. 15s, 30s, 60s), the initial chunk also uses EXTEND key
+        // so that Google permissions match across subsequent extension chunks.
+        // If total length <= 8s, strictly use BASE key.
+        const googleVeoKey =
+          totalDurationSec > 8
+            ? process.env.GOOGLE_VEO_EXTEND_API_KEY
+            : process.env.GOOGLE_VEO_BASE_API_KEY;
+
+        // 👇 Google Veo Fast supports duration strictly between 4s and 8s per call
+        let durationSec = requestedSec;
         if (durationSec < 4) durationSec = 4;
         if (durationSec > 8) durationSec = 8;
 
@@ -4679,8 +4687,14 @@ router.post(
         });
       }
 
-      // Single Unified Google Veo Key for seamless native extension
-      const googleExtendKey = process.env.GOOGLE_VEO_BASE_API_KEY || process.env.GOOGLE_VEO_EXTEND_API_KEY;
+      // Google Veo Extension Key (Key B - Strictly separate from Base Key A)
+      const googleExtendKey = process.env.GOOGLE_VEO_EXTEND_API_KEY;
+      if (!googleExtendKey) {
+        return res.status(500).json({
+          success: false,
+          error: "GOOGLE_VEO_EXTEND_API_KEY is not configured.",
+        });
+      }
 
       let formattedAspect =
         aspectRatio === "9:16" || aspectRatio === "portrait" ? "9:16" : "16:9";
