@@ -14,6 +14,7 @@ const planRoutes = require("./routes/plans");
 const paymentRoutes = require("./routes/payments");
 const toolRoutes = require("./routes/tools");
 const notebookRoutes = require("./routes/notebook");
+const chatPdfRoutes = require("./routes/chatPdf");
 // const historyRoutes = require('./routes/history');
 const adminRoutes = require("./routes/admin");
 const aiProviderRoutes = require("./routes/aiProviders");
@@ -154,7 +155,7 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://onechatai.ai",
-      "http://localhost:53719",
+      "http://localhost:51604",
       "http://localhost:5173",
     ],
     credentials: true,
@@ -200,6 +201,7 @@ app.use("/api/plans", planRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/tools", toolRoutes);
 app.use("/api/notebooks", notebookRoutes);
+app.use("/api/chat-pdf", chatPdfRoutes);
 app.use("/api/stability", stabilityRoutes);
 // app.use('/api/history', historyRoutes);
 app.use("/api/admin", adminRoutes);

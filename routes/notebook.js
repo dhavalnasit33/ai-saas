@@ -51,8 +51,8 @@ const upload = multer({
 
 // Model and Limit Configuration
 const NOTEBOOK_LLM_MODEL = process.env.NOTEBOOK_LLM_MODEL || 'deepseek-v4-flash-vision-exp';
-const MAX_DOCS_PER_NOTEBOOK = 15;
-const MAX_PAGES_PER_DOC = 30;
+const MAX_DOCS_PER_NOTEBOOK = 40;  
+const MAX_PAGES_PER_DOC = 12;     
 const MAX_IMAGES_PER_NOTEBOOK = 50;
 const MAX_PASTED_TEXT_SOURCES = 15;
 const MAX_WORDS_PER_PASTED_TEXT = 1000;
