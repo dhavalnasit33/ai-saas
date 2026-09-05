@@ -138,6 +138,7 @@ const alternativeToolsRoutes = require("./routes/alternativeTools");
 const leadMagnetRoutes = require("./routes/leadMagnet");
 const leadMagnetCategoriesRoutes = require("./routes/leadMegnetCategories");
 const publishingRoutes = require("./routes/publishing");
+const videoTaxonomyRoutes = require("./routes/videoTaxonomy");
 
 // const startTrashCleanupJob = require("./cron/emptyTrash");
 const app = express();
@@ -153,7 +154,7 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://onechatai.ai",
-      "http://localhost:50464",
+      "http://localhost:53719",
       "http://localhost:5173",
     ],
     credentials: true,
@@ -539,6 +540,8 @@ app.use("/api/email-verify", emailVerifyRoute);
 app.use("/api/alternative-tools", alternativeToolsRoutes);
 app.use("/api/lead-magnets", leadMagnetRoutes);
 app.use("/api/lead-magnet-categories", leadMagnetCategoriesRoutes);
+app.use("/api/video-taxonomy", videoTaxonomyRoutes);
+
 
 // app.get("/api/download-images", async (req, res) => {
 //   try {

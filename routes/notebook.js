@@ -273,24 +273,24 @@ router.post('/:id/sources', protect, upload.single('file'), validateNotebookSour
               message: 'Document exceeds maximum limit of ' + MAX_PAGES_PER_DOC + ' pages per document (Uploaded PDF has ' + pageCount + ' pages).',
             });
           }
+        } catch (e) {
+          console.warn('Standard pdf-parse failed (corrupted or bad XRef table in ' + name + '), falling back to modern pdfjs rasterizer:', e.message);
+        }
 
-          // Scanned PDF Fallback: If no selectable text was extracted, retain fileType = 'pdf' (so it counts as Document) but attach rendered visual grounding pages in fileUrl
-          if (!extractedText) {
-            fileType = 'pdf';
-            try {
-              const renderedImages = await rasterizePdfToImages(req.file.buffer, 3);
-              if (renderedImages && renderedImages.length > 0) {
-                fileUrl = renderedImages[0];
-              } else {
-                fileUrl = 'data:image/jpeg;base64,' + req.file.buffer.toString('base64');
-              }
-            } catch (rErr) {
+        // Scanned or non-extractable / corrupted XRef PDF Fallback: Rasterize pages visually
+        if (!extractedText) {
+          fileType = 'pdf';
+          try {
+            const renderedImages = await rasterizePdfToImages(req.file.buffer, 3);
+            if (renderedImages && renderedImages.length > 0) {
+              fileUrl = renderedImages[0];
+            } else {
               fileUrl = 'data:image/jpeg;base64,' + req.file.buffer.toString('base64');
             }
-            extractedText = '[Scanned / Image-only PDF: ' + name + ' (' + pageCount + ' pages) prepared as visual grounding input]';
+          } catch (rErr) {
+            fileUrl = 'data:image/jpeg;base64,' + req.file.buffer.toString('base64');
           }
-        } catch (e) {
-          console.error('PDF parsing error:', e);
+          extractedText = '[PDF Document: ' + name + ' (' + pageCount + ' pages) prepared as visual grounding input]';
         }
       } else if (ext === 'docx' || ext === 'doc') {
         fileType = ext === 'doc' ? 'doc' : 'docx';
@@ -555,23 +555,95 @@ router.post('/:id/chats/:chatId/message', protect, async (req, res) => {
         .join('\n\n');
     }
 
-    // 3. Stable System Instructions (Cacheable Prefix Component 1)
-    const stableSystemInstruction =
-      'You are a specialized research assistant operating inside OneChat Notebook LLM.\n' +
-      'Answer questions accurately and directly by grounding your reasoning on the following notebook source materials:\n' +
-      '--- NOTEBOOK TEXT SOURCES ---\n' +
-      textSourcesBlock +
-      '\n--- END NOTEBOOK TEXT SOURCES ---';
+    // 3. Stable System Instructions (Source-First + General Knowledge Behavior)
+  const stableSystemInstruction = `
+You are a specialized project-aware AI assistant operating inside OneChat Notebook LLM.
 
-    // 4. Build Multi-modal Messages following exact sequence:
-    // [System Prompt] -> [Chat History] -> [Latest User Query with Grounding Images]
+CORE PRINCIPLE: Source-First, Not Source-Only.
+
+SOURCE USAGE RULES:
+- Notebook sources are important context and should be used whenever they are relevant to the user's question.
+- You are NOT limited only to information contained in the Notebook sources.
+- You may use your broader general LLM knowledge, reasoning, and understanding when needed to answer the user's question helpfully and completely.
+- When Notebook sources directly support an answer, prioritize and ground the answer in those sources.
+- When Notebook sources contain only part of the information needed, use the relevant source information first and supplement it with your general knowledge and reasoning.
+- When Notebook sources are not relevant to the user's question, answer using your general knowledge and reasoning.
+- Do not refuse or unnecessarily limit an answer simply because the requested information is not present in the Notebook sources.
+
+SOURCE VS GENERAL KNOWLEDGE:
+- Never claim that information from general knowledge, reasoning, or inference came from the user's Notebook sources.
+- Never invent or attribute facts to a Notebook source unless that source actually supports them.
+- When the distinction is useful or important for accuracy, clearly indicate which information comes from the Notebook sources and which information comes from general knowledge or reasoning.
+- Do not add unnecessary source/general-knowledge disclaimers when they do not materially affect the answer.
+- If the sources provide specific facts, numbers, names, dates, or other project information, preserve and prioritize those facts rather than replacing them with assumptions.
+
+SOURCE-ONLY OVERRIDE:
+- If the user explicitly asks you to use ONLY the Notebook sources, temporarily restrict your answer strictly to the Notebook sources.
+- Examples of source-only requests include:
+  - "only use my sources"
+  - "answer only based on my notebook data"
+  - "do not use external data"
+  - "answer only using my uploaded files"
+  - "based only on these documents"
+  - or similar wording.
+- When the user explicitly requests source-only analysis, do NOT supplement the answer with general knowledge, outside information, or unsupported assumptions.
+- If the sources do not contain enough information to answer a source-only request, clearly state that the available Notebook sources do not contain enough information.
+
+ANSWERING BEHAVIOR:
+- Be helpful, accurate, and honest about the source of information.
+- Use Notebook sources as the primary project context whenever they are relevant.
+- Combine Notebook information with general knowledge and reasoning when that produces a more complete and useful answer, unless the user explicitly requests source-only analysis.
+- If the user asks for an explanation, comparison, recommendation, analysis, brainstorming, or other reasoning task, use the available Notebook context together with your general knowledge when appropriate.
+- If the user asks a question completely outside the Notebook content, answer normally using your general LLM knowledge rather than saying that the Notebook does not contain the answer.
+- Do not pretend that general knowledge is contained in the Notebook.
+- Do not fabricate source content, citations, facts, statistics, or conclusions.
+- When information is uncertain or cannot reasonably be determined, say so rather than presenting speculation as fact.
+
+RESPONSE PRIORITY:
+1. Follow the user's explicit instructions.
+2. Use relevant Notebook sources as the primary project context.
+3. When necessary, supplement with general LLM knowledge and reasoning.
+4. Provide the most helpful, accurate, and complete answer possible.
+
+The Notebook should behave as a project-aware AI assistant, not simply as a document search interface. Notebook sources should guide the answer, but they should not unnecessarily limit the assistant's ability to explain, reason, analyze, create, or help the user.
+
+--- NOTEBOOK TEXT SOURCES ---
+${textSourcesBlock}
+--- END NOTEBOOK TEXT SOURCES ---
+`;
+
+    // 4. Build Multi-modal Messages following exact Phase 10 sequence:
+    // 1. Stable Instructions + Text Sources
+    // 2. Stable Visual Sources (Grounding Images)
+    // 3. Current Chat History (Preserves cache prefix)
+    // 4. Latest User Question
     const payloadMessages = [
       { role: 'system', content: stableSystemInstruction },
     ];
 
-    // Append recent Chat History (deterministic order, excluding the current prompt)
-    const recentHistory = chat.messages.slice(-8);
-    recentHistory.forEach(msg => {
+    // If there are Notebook Image Sources, attach them deterministically as a grounding prefix before chat history
+    if (imageSources.length > 0) {
+      const visualGroundingParts = [
+        { type: 'text', text: '--- NOTEBOOK VISUAL SOURCES GROUNDING ---' },
+      ];
+      imageSources.forEach(img => {
+        if (img.fileUrl && (img.fileUrl.startsWith('data:image/') || img.fileUrl.startsWith('data:application/pdf') || img.fileUrl.startsWith('http'))) {
+          visualGroundingParts.push({
+            type: 'image_url',
+            image_url: { url: img.fileUrl },
+          });
+        }
+      });
+      payloadMessages.push({ role: 'user', content: visualGroundingParts });
+      payloadMessages.push({
+        role: 'assistant',
+        content: 'I have analyzed and indexed the visual source materials attached to this notebook. I will prioritize them when relevant and combine them with my general knowledge to provide comprehensive answers.',
+      });
+    }
+
+    // Append full Chat History within token budget (maintains exact cacheable prefix from turn 1)
+    const allChatHistory = chat.messages || [];
+    allChatHistory.forEach(msg => {
       if (msg.imageUrl) {
         payloadMessages.push({
           role: msg.role,
@@ -585,33 +657,26 @@ router.post('/:id/chats/:chatId/message', protect, async (req, res) => {
       }
     });
 
-    // Build Current User Query Turn (incorporates all active notebook grounding images & query prompt)
-    if (imageSources.length > 0 || imageUrl) {
-      const userParts = [];
-      imageSources.forEach(img => {
-        if (img.fileUrl && (img.fileUrl.startsWith('data:image/') || img.fileUrl.startsWith('data:application/pdf') || img.fileUrl.startsWith('http'))) {
-          userParts.push({
-            type: 'image_url',
-            image_url: { url: img.fileUrl },
-          });
-        }
+    // Append Current User Question Turn
+    if (imageUrl && imageUrl.startsWith('data:image/')) {
+      payloadMessages.push({
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: imageUrl } },
+          { type: 'text', text: prompt },
+        ],
       });
-      if (imageUrl && imageUrl.startsWith('data:image/')) {
-        userParts.push({ type: 'image_url', image_url: { url: imageUrl } });
-      }
-      userParts.push({ type: 'text', text: prompt });
-      payloadMessages.push({ role: 'user', content: userParts });
     } else {
       payloadMessages.push({ role: 'user', content: prompt });
     }
 
-    // 5. Pre-flight Token Budget Validation (Excludes raw Base64 image payload from character-based token count)
+    // 5. Pre-flight Token Budget Validation across full conversation
     let textOnlyContent = stableSystemInstruction + ' ' + prompt;
-    recentHistory.forEach(msg => {
+    allChatHistory.forEach(msg => {
       textOnlyContent += ' ' + (typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content));
     });
-    // DeepSeek Vision calculates image tokens at ~1,000 to 1,600 tokens per image, not based on base64 string length
-    const imageTokenEstimate = imageSources.length * 1200 + (imageUrl ? 1200 : 0);
+    // DeepSeek Vision calculates ~1,200 tokens per image
+    const imageTokenEstimate = (imageSources.length + (imageUrl ? 1 : 0)) * 1200;
     const estimatedTotalPromptTokens = estimateTokens(textOnlyContent) + imageTokenEstimate;
 
     const maxAllowedInputTokens = MAX_CONTEXT_TOKENS - RESERVED_OUTPUT_TOKENS;
