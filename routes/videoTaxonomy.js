@@ -1,6 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const { VideoMainCategory, VideoSubcategory } = require("../models/VideoTaxonomy");
+const {
+  VideoMainCategory,
+  VideoSubcategory,
+} = require("../models/VideoTaxonomy");
 const { protect, authorize } = require("../middleware/auth");
 
 // -------------------------------------------------------------
@@ -59,7 +62,7 @@ router.get("/subcategories", async (req, res) => {
 // -------------------------------------------------------------
 
 // Create Main Category
-router.post("/main-categories",protect, authorize('Admin'), async (req, res) => {
+router.post("/main-categories", protect, async (req, res) => {
   try {
     const category = new VideoMainCategory(req.body);
     await category.save();
@@ -70,14 +73,15 @@ router.post("/main-categories",protect, authorize('Admin'), async (req, res) => 
 });
 
 // Update Main Category
-router.put("/main-categories/:id",protect, authorize('Admin'), async (req, res) => {
+router.put("/main-categories/:id", protect, async (req, res) => {
   try {
     const category = await VideoMainCategory.findByIdAndUpdate(
       req.params.id,
       req.body,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
-    if (!category) return res.status(404).json({ success: false, message: "Not found" });
+    if (!category)
+      return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: category });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -85,10 +89,11 @@ router.put("/main-categories/:id",protect, authorize('Admin'), async (req, res) 
 });
 
 // Delete Main Category
-router.delete("/main-categories/:id", protect, authorize('Admin'),async (req, res) => {
+router.delete("/main-categories/:id", protect, async (req, res) => {
   try {
     const category = await VideoMainCategory.findByIdAndDelete(req.params.id);
-    if (!category) return res.status(404).json({ success: false, message: "Not found" });
+    if (!category)
+      return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, message: "Main Category deleted" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -96,7 +101,7 @@ router.delete("/main-categories/:id", protect, authorize('Admin'),async (req, re
 });
 
 // Create Subcategory
-router.post("/subcategories",protect, authorize('Admin'), async (req, res) => {
+router.post("/subcategories", protect, async (req, res) => {
   try {
     const subcategory = new VideoSubcategory(req.body);
     await subcategory.save();
@@ -107,14 +112,15 @@ router.post("/subcategories",protect, authorize('Admin'), async (req, res) => {
 });
 
 // Update Subcategory
-router.put("/subcategories/:id", protect, authorize('Admin'),async (req, res) => {
+router.put("/subcategories/:id", protect, async (req, res) => {
   try {
     const subcategory = await VideoSubcategory.findByIdAndUpdate(
       req.params.id,
       req.body,
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
-    if (!subcategory) return res.status(404).json({ success: false, message: "Not found" });
+    if (!subcategory)
+      return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: subcategory });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -122,10 +128,11 @@ router.put("/subcategories/:id", protect, authorize('Admin'),async (req, res) =>
 });
 
 // Delete Subcategory
-router.delete("/subcategories/:id",protect, authorize('Admin'), async (req, res) => {
+router.delete("/subcategories/:id", protect, async (req, res) => {
   try {
     const subcategory = await VideoSubcategory.findByIdAndDelete(req.params.id);
-    if (!subcategory) return res.status(404).json({ success: false, message: "Not found" });
+    if (!subcategory)
+      return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, message: "Subcategory deleted" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
