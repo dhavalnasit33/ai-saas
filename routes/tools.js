@@ -26,6 +26,8 @@ const {
   getBlockMessage,
   checkUserViolationStatus,
 } = require("../utils/violations");
+const AIProvider = require("../models/AIProvider");
+
 
 function extractLatestUserMessage(prompt) {
   if (!prompt || typeof prompt !== "string") return "";
@@ -1496,6 +1498,13 @@ router.post(
         });
       }
 
+      const superAdminEmails = [
+        "kamarahabib@gmail.com",
+        "dhavalnasit3@gmail.com",
+      ];
+      const isSuperAdmin =
+        user.email && superAdminEmails.includes(user.email.toLowerCase());
+
       // 2. CALCULATE DYNAMIC COST
       const totalCost = calculateVideoCreditCost(
         model,
@@ -1504,8 +1513,8 @@ router.post(
         resolution,
       );
 
-      // 3. CHECK BALANCE
-      if ((user.video_credits || 0) < totalCost) {
+      // 3. CHECK BALANCE (bypassed for super admin testing)
+      if (!isSuperAdmin && (user.video_credits || 0) < totalCost) {
         return res.status(402).json({
           success: false,
           error: `Insufficient video credits. This video requires ${totalCost} credits, but you only have ${user.video_credits || 0}.`,
@@ -1647,9 +1656,11 @@ router.post(
             .json({ error: "Invalid video model provided" });
       }
 
-      // 5. DEDUCT CREDITS UPON SUCCESS
-      user.video_credits -= totalCost;
-      await user.save();
+      // 5. DEDUCT CREDITS UPON SUCCESS (bypassed for super admin testing)
+      if (!isSuperAdmin) {
+        user.video_credits -= totalCost;
+        await user.save();
+      }
 
       res.set("Content-Type", contentType);
       res.send(videoData);
@@ -4162,11 +4173,19 @@ router.post(
           .json({ success: false, error: "User not found" });
       }
 
+      const superAdminEmails = [
+        "kamarahabib@gmail.com",
+        "dhavalnasit3@gmail.com",
+      ];
+      const isSuperAdmin =
+        user.email && superAdminEmails.includes(user.email.toLowerCase());
+
       // Block basic/standard/lite users from generating videos
       if (
-        user.plan === "basic" ||
-        user.plan === "standard" ||
-        user.plan === "lite"
+        !isSuperAdmin &&
+        (user.plan === "basic" ||
+          user.plan === "standard" ||
+          user.plan === "lite")
       ) {
         return res.status(403).json({
           success: false,
@@ -4175,7 +4194,7 @@ router.post(
         });
       }
 
-      if (user.subscription_status === "trialing") {
+      if (!isSuperAdmin && user.subscription_status === "trialing") {
         return res.status(403).json({
           success: false,
           error:
@@ -4187,7 +4206,7 @@ router.post(
       const durationSeconds = parseInt(duration) || 8;
       const creditCost = durationSeconds * 9;
 
-      if ((user.video_credits || 0) < creditCost) {
+      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
         return res.status(402).json({
           success: false,
           error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${user.video_credits || 0}.`,
@@ -4364,9 +4383,11 @@ router.post(
                     timeout: 60000,
                   });
 
-                  await User.findByIdAndUpdate(req.user.id, {
-                    $inc: { video_credits: -creditCost },
-                  });
+                  if (!isSuperAdmin) {
+                    await User.findByIdAndUpdate(req.user.id, {
+                      $inc: { video_credits: -creditCost },
+                    });
+                  }
 
                   // 👇 Clean the URI (Remove the :download?alt=media part)
                   let cleanUri = targetVideo.uri;
@@ -4387,9 +4408,11 @@ router.post(
 
                   return res.send(Buffer.from(dlRes.data));
                 } else if (targetVideo?.bytesBase64Encoded) {
-                  await User.findByIdAndUpdate(req.user.id, {
-                    $inc: { video_credits: -creditCost },
-                  });
+                  if (!isSuperAdmin) {
+                    await User.findByIdAndUpdate(req.user.id, {
+                      $inc: { video_credits: -creditCost },
+                    });
+                  }
 
                   res.set("Content-Type", "video/mp4");
                   return res.send(
@@ -4560,10 +4583,12 @@ router.post(
       const responseContentType =
         videoDownloadResponse.headers["content-type"] || "video/mp4";
 
-      // 7. Deduct credits
-      await User.findByIdAndUpdate(req.user.id, {
-        $inc: { video_credits: -creditCost },
-      });
+      // 7. Deduct credits (bypassed for super admin testing)
+      if (!isSuperAdmin) {
+        await User.findByIdAndUpdate(req.user.id, {
+          $inc: { video_credits: -creditCost },
+        });
+      }
 
       // 8. Stream video binary back
       res.set("Content-Type", responseContentType);
@@ -4640,9 +4665,16 @@ router.post(
       if (extendSec > 8) extendSec = 8;
       if (extendSec < 4) extendSec = 4;
 
+      const superAdminEmails = [
+        "kamarahabib@gmail.com",
+        "dhavalnasit3@gmail.com",
+      ];
+      const isSuperAdmin =
+        user.email && superAdminEmails.includes(user.email.toLowerCase());
+
       const creditCost = extendSec * 9;
 
-      if ((user.video_credits || 0) < creditCost) {
+      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
         return res.status(402).json({
           success: false,
           error: `Insufficient video credits. You need ${creditCost} credits.`,
@@ -4696,8 +4728,12 @@ router.post(
         });
       }
 
-      let formattedAspect =
-        aspectRatio === "9:16" || aspectRatio === "portrait" ? "9:16" : "16:9";
+      let formattedAspect = "16:9";
+      if (aspectRatio === "9:16" || aspectRatio === "portrait") {
+        formattedAspect = "9:16";
+      } else if (aspectRatio === "1:1") {
+        formattedAspect = "1:1";
+      }
 
       // 👇 Check Audio
       const shouldGenerateAudio =
@@ -4710,12 +4746,22 @@ router.post(
         ? { uri: cleanUri }
         : { bytesBase64Encoded: uploadedVideoBase64, mimeType: uploadedVideoMime };
 
-      // 🔥 Enrich prompt with natural storytelling continuation + strict visual/subject identity preservation
+      // 🔥 Enrich prompt with natural storytelling continuation + absolute facial geometry and identity preservation
       let extensionPrompt = prompt ? prompt.trim() : "";
-      const continuationDirectives = "Seamlessly continue the video story and action progression naturally from the exact ending frame. Maintain strict consistency of the character face, identity, clothing, textures, and lighting environment. Develop dynamic, engaging movement, new natural gestures, camera cinematography, and evolving scene action instead of freezing or looping.";
+      const continuationDirectives = `MANDATORY IDENTITY, FACIAL GEOMETRY & CAMERA LOCK (HIGHEST PRIORITY):
+1. CHRONOLOGICAL CONTINUATION: This is a direct real-time continuation of the preceding video scene. Maintain seamless continuity from the exact last frame.
+2. ABSOLUTE FACIAL LOCK: The central protagonist MUST remain 100% IDENTICAL to the preceding video clip. Preserve the exact same facial bone structure, jawline, eye shape, nose shape, mouth, natural expression, skin tone, hairstyle, and outfit.
+3. ZERO FACIAL MORPHING: Do NOT alter facial proportions, do NOT morph the face, do NOT enlarge or distort facial features, and do NOT change ethnic appearance or age. 
+4. CAMERA & FRAMING STABILITY: Maintain consistent cinematic camera distance and framing (medium waist-up shot) matching the preceding scene. Do NOT aggressively zoom in onto the face, and do NOT distort facial perspective.
+5. NATURAL SCENE ACTION: Continue natural body movement, walking, and ambient environmental action smoothly in the exact same historical setting without jumping or replacing the character.`;
       
       if (extensionPrompt) {
-        extensionPrompt = `${extensionPrompt}. ${continuationDirectives}`;
+        // Clean out any conflicting "supplied reference images" instructions from extension prompts
+        extensionPrompt = extensionPrompt
+          .replace(/Use the supplied reference images to bring the requested historical experience to life\./gi, "")
+          .replace(/from the supplied reference images/gi, "from the preceding video")
+          .trim();
+        extensionPrompt = `${extensionPrompt}\n\n${continuationDirectives}`;
       } else {
         extensionPrompt = continuationDirectives;
       }
@@ -4727,10 +4773,11 @@ router.post(
         },
       ];
 
-      // Google Veo parameters: standard aspectRatio and durationSeconds
+      // Google Veo parameters: standard aspectRatio, durationSeconds, and personGeneration
       const parameters = {
         aspectRatio: formattedAspect,
         durationSeconds: extendSec,
+        personGeneration: "allow_adult",
       };
 
       const googleEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:predictLongRunning?key=${googleExtendKey}`;
@@ -4780,9 +4827,12 @@ router.post(
               timeout: 60000,
             });
 
-            await User.findByIdAndUpdate(req.user.id, {
-              $inc: { video_credits: -creditCost },
-            });
+            // Deduct credits (bypassed for super admin testing)
+            if (!isSuperAdmin) {
+              await User.findByIdAndUpdate(req.user.id, {
+                $inc: { video_credits: -creditCost },
+              });
+            }
 
             // નવો URI પાછો મોકલો
             let nextCleanUri = targetVideo.uri;
@@ -4861,10 +4911,18 @@ router.post(
           .json({ success: false, error: "User not found" });
       }
 
+      const superAdminEmails = [
+        "kamarahabib@gmail.com",
+        "dhavalnasit3@gmail.com",
+      ];
+      const isSuperAdmin =
+        user.email && superAdminEmails.includes(user.email.toLowerCase());
+
       if (
-        user.plan === "basic" ||
-        user.plan === "standard" ||
-        user.plan === "lite"
+        !isSuperAdmin &&
+        (user.plan === "basic" ||
+          user.plan === "standard" ||
+          user.plan === "lite")
       ) {
         return res.status(403).json({
           success: false,
@@ -4873,7 +4931,7 @@ router.post(
         });
       }
 
-      if (user.subscription_status === "trialing") {
+      if (!isSuperAdmin && user.subscription_status === "trialing") {
         return res.status(403).json({
           success: false,
           error:
@@ -4885,7 +4943,7 @@ router.post(
       const durationSeconds = parseInt(duration) || 5;
       const creditCost = durationSeconds * 9;
 
-      if ((user.video_credits || 0) < creditCost) {
+      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
         return res.status(402).json({
           success: false,
           error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${user.video_credits || 0}.`,
@@ -5029,10 +5087,12 @@ router.post(
       const responseContentType =
         videoDownloadResponse.headers["content-type"] || "video/mp4";
 
-      // 7. Deduct credits upon success
-      await User.findByIdAndUpdate(req.user.id, {
-        $inc: { video_credits: -creditCost },
-      });
+      // 7. Deduct credits upon success (bypassed for super admin testing)
+      if (!isSuperAdmin) {
+        await User.findByIdAndUpdate(req.user.id, {
+          $inc: { video_credits: -creditCost },
+        });
+      }
 
       // 8. Send binary video response
       res.set("Content-Type", responseContentType);
@@ -5045,10 +5105,6 @@ router.post(
       if (error.response) {
         statusCode = error.response.status || 500;
         const rawData = error.response.data;
-        console.error(
-          "Fal.ai error response data:",
-          JSON.stringify(rawData, null, 2),
-        );
         if (rawData && rawData.detail) {
           const details = Array.isArray(rawData.detail)
             ? rawData.detail
@@ -5075,4 +5131,481 @@ router.post(
     }
   },
 );
+
+// =========================================================================
+// STEP INTO HISTORY 4-STAGE PIPELINE ROUTE
+
+// Stage 1: Collect user input
+// Stage 2: Get Image Prompt from Claude Sonnet 5
+// Stage 3: Generate 3 Reference Images in Parallel (GPT Image 2, Meta Muse, Seedream 5 Pro)
+// Stage 4: Generate Video via Veo 3.1 Fast using the 3 references + short fixed VIDEO REQUEST prompt
+// =========================================================================
+router.post(
+  "/step-into-history-video",
+  upload.any(),
+  protect,
+  aiGenerationLimiter,
+  async (req, res) => {
+    const axios = require("axios");
+    req.setTimeout(600000); // 10 minute timeout
+
+    const {
+      historicalContext,
+      experience,
+      role,
+      style,
+      sceneDescription,
+      aspectRatio = "16:9",
+      duration = "8",
+      totalDuration,
+      includeAudio = "no",
+      imageUrl: directImageUrl,
+    } = req.body;
+
+    const files = req.files || [];
+
+    try {
+      // 1. Fetch user & validate subscription/credits
+      const user = await User.findById(req.user.id);
+      if (!user) {
+        return res.status(404).json({ success: false, error: "User not found" });
+      }
+
+      const superAdminEmails = [
+        "kamarahabib@gmail.com",
+        "dhavalnasit3@gmail.com",
+      ];
+      const isSuperAdmin =
+        user.email && superAdminEmails.includes(user.email.toLowerCase());
+
+      if (
+        !isSuperAdmin &&
+        (user.plan === "basic" ||
+          user.plan === "standard" ||
+          user.plan === "lite")
+      ) {
+        return res.status(403).json({
+          success: false,
+          error:
+            "Basic and Free users cannot generate videos. Please upgrade to a Pro or Pro Max plan.",
+        });
+      }
+
+      if (!isSuperAdmin && user.subscription_status === "trialing") {
+        return res.status(403).json({
+          success: false,
+          error:
+            "Video generation is not available during the free trial. Please wait for your trial to end and your subscription to become active.",
+        });
+      }
+
+      const requestedSec = parseInt(duration) || 8;
+      const creditCost = requestedSec * 9;
+
+      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
+        return res.status(402).json({
+          success: false,
+          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${user.video_credits || 0}.`,
+        });
+      }
+
+      // -------------------------------------------------------------
+      // STAGE 1: Collect & Normalize Input (Resolve User Image URL / Data URI)
+      // -------------------------------------------------------------
+      let userImageUrl = directImageUrl;
+
+      if (!userImageUrl && files.length > 0) {
+        const primaryFile = files[0];
+        const mimetype = primaryFile.mimetype || "image/png";
+        userImageUrl = `data:${mimetype};base64,${primaryFile.buffer.toString("base64")}`;
+        console.log(`[StepIntoHistory] User image converted to Base64 data URI in RAM (${primaryFile.buffer.length} bytes, type: ${mimetype})`);
+      }
+
+      if (!userImageUrl) {
+        return res.status(400).json({
+          success: false,
+          error: "Please upload a clear photo of yourself for Step Into History.",
+        });
+      }
+
+      console.log("[StepIntoHistory] User image ready (starts with):", userImageUrl.substring(0, 50) + "...");
+
+      // -------------------------------------------------------------
+      // STAGE 2: Get Image Prompt from Claude Sonnet 5
+      // -------------------------------------------------------------
+      console.log("[StepIntoHistory - Stage 2] Requesting image prompt from Claude Sonnet 5...");
+      const claudeProvider = await AIProvider.findOne({
+        name: "anthropic",
+        is_active: true,
+      }).select("+api_key");
+
+      if (!claudeProvider || !claudeProvider.api_key) {
+        throw new Error("Anthropic AI provider is not configured or active.");
+      }
+
+      const systemPrompt = `You are the image-prompt writer for OneChat AI's Step Into History video tools.
+
+Write ONE detailed image-edit prompt using the request below.
+
+REQUIREMENTS
+1. Identity preservation is the highest priority. Keep the exact same recognizable person: sharp clear face, facial structure, skin tone, hairstyle, facial expressions, approximate age, body type, and overall likeness.
+2. Frame the subject in a cinematic MEDIUM SHOT (waist-up / chest-up portrait) with the protagonist prominently featured and in razor-sharp focus in the foreground, showing the rich, populated historical background behind them. Avoid tiny distant full-body framing.
+3. Transform modern clothing and accessories into historically accurate and detailed clothing for the selected role and period.
+4. Remove modern clothing, technology, logos, watches, and modern objects unless specifically required.
+5. Create a complete, populated, believable living historical environment behind and around the protagonist.
+6. Use Experience and Role to decide what the person is doing in the still image.
+7. Use Style for lighting, mood, composition, and visual treatment.
+8. Make the result photorealistic, cinematic, and sharply focused.
+9. If Scene Description is blank, create an appropriate scene automatically.
+10. Do NOT include video duration, camera movement over time, audio, temporal consistency, or detailed motion instructions.
+11. Do NOT create a character sheet, collage, prop sheet, location sheet, or multiple versions of the person.
+12. Output ONLY the final image-generation prompt.`;
+
+      const userClaudePrompt = `HISTORICAL REQUEST
+- Historical Context = ${historicalContext || "Historical Era"}
+- Experience = ${experience || "Explore the City"}
+- Role = ${role || "Traveler / Visitor"}
+- Style = ${style || "Historically Realistic"}
+- Scene Description = ${sceneDescription || "blank"}
+
+The image model will also receive ONE uploaded photo as the identity reference.`;
+
+      const claudeRes = await axios.post(
+        `${claudeProvider.base_url || "https://api.anthropic.com"}/v1/messages`,
+        {
+          model: "claude-sonnet-5",
+          max_tokens: 1500,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userClaudePrompt }],
+        },
+        {
+          headers: {
+            "x-api-key": claudeProvider.api_key,
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+          },
+          timeout: 60000,
+        }
+      );
+
+      const stage2ImagePrompt = (claudeRes.data?.content?.[0]?.text || "").trim();
+      if (!stage2ImagePrompt) {
+        throw new Error("Claude Sonnet 5 failed to generate the historical image prompt.");
+      }
+      console.log("[StepIntoHistory - Stage 2] Claude image prompt:\n", stage2ImagePrompt);
+
+      // -------------------------------------------------------------
+      // STAGE 3: Generate 3 Reference Images in Parallel (Fal.ai)
+      // -------------------------------------------------------------
+      console.log("[StepIntoHistory - Stage 3] Generating 3 reference images in parallel via Fal.ai...");
+
+      const gptKey = (process.env.FAL_KEY_GPT_IMAGE_2 || "").replace(/['"]/g, "").trim();
+      const museKey = (process.env.FAL_KEY_META_MUSE || "").replace(/['"]/g, "").trim();
+      const seedreamKey = (process.env.FAL_KEY_SEEDREAM_5_PRO || "").replace(/['"]/g, "").trim();
+
+      const pollFalQueue = async (statusUrl, responseUrl, apiKey, label) => {
+        let consecutive500Count = 0;
+        for (let attempt = 0; attempt < 60; attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 4000));
+          try {
+            const check = await axios.get(statusUrl, {
+              headers: { Authorization: `Key ${apiKey}` },
+              timeout: 25000,
+            });
+            consecutive500Count = 0;
+            if (check.data?.status === "COMPLETED") {
+              const resCheck = await axios.get(responseUrl, {
+                headers: { Authorization: `Key ${apiKey}` },
+                timeout: 25000,
+              });
+              return resCheck.data;
+            } else if (check.data?.status === "FAILED") {
+              console.error(`[StepIntoHistory - Stage 3] ${label} Failed:`, check.data?.error);
+              return null;
+            }
+          } catch (e) {
+            console.warn(`[StepIntoHistory - Stage 3] ${label} polling check warning:`, e.message);
+            if (e.response?.status === 500) {
+              consecutive500Count++;
+              if (consecutive500Count >= 3) {
+                console.error(`[StepIntoHistory - Stage 3] ${label} received 3 consecutive 500 errors from Fal.ai. Aborting early to avoid delay.`);
+                return null;
+              }
+            }
+          }
+        }
+        return null;
+      };
+
+      // 1. GPT Image 2 (Medium Quality)
+      const gptUrl = process.env.FAL_URL_GPT_IMAGE_2 || "https://queue.fal.run/openai/gpt-image-2/edit";
+      const gptPromise = (async () => {
+        try {
+          const res = await axios.post(
+            gptUrl,
+            { prompt: stage2ImagePrompt, image_urls: [userImageUrl], quality: "medium" },
+            { headers: { Authorization: `Key ${gptKey}`, "Content-Type": "application/json" }, timeout: 45000 }
+          );
+          if (!res.data?.status_url) {
+            return res.data?.images?.[0]?.url || res.data?.image?.url || null;
+          }
+          const result = await pollFalQueue(res.data.status_url, res.data.response_url, gptKey, "GPT Image 2");
+          return result?.images?.[0]?.url || result?.image?.url || null;
+        } catch (err) {
+          console.error("[StepIntoHistory - Stage 3] GPT Image 2 error:", err?.response?.data || err.message);
+          return null;
+        }
+      })();
+
+      // 2. Meta Muse
+      const museUrl = process.env.FAL_URL_META_MUSE || "https://queue.fal.run/fal-ai/muse-image/edit";
+      const musePromise = (async () => {
+        try {
+          const res = await axios.post(
+            museUrl,
+            { prompt: stage2ImagePrompt, image_urls: [userImageUrl] },
+            { headers: { Authorization: `Key ${museKey}`, "Content-Type": "application/json" }, timeout: 45000 }
+          );
+          if (!res.data?.status_url) {
+            return res.data?.images?.[0]?.url || res.data?.image?.url || null;
+          }
+          const result = await pollFalQueue(res.data.status_url, res.data.response_url, museKey, "Meta Muse");
+          return result?.images?.[0]?.url || result?.image?.url || null;
+        } catch (err) {
+          console.error("[StepIntoHistory - Stage 3] Meta Muse error:", err?.response?.data || err.message);
+          return null;
+        }
+      })();
+
+      // 3. Seedream 5 Pro Edit
+      const seedreamUrl = process.env.FAL_URL_SEEDREAM_5_PRO || "https://queue.fal.run/bytedance/seedream/v5/pro/edit";
+      const seedreamPromise = (async () => {
+        try {
+          const res = await axios.post(
+            seedreamUrl,
+            { prompt: stage2ImagePrompt, image_urls: [userImageUrl] },
+            { headers: { Authorization: `Key ${seedreamKey}`, "Content-Type": "application/json" }, timeout: 45000 }
+          );
+          if (!res.data?.status_url) {
+            return res.data?.images?.[0]?.url || res.data?.image?.url || null;
+          }
+          const result = await pollFalQueue(res.data.status_url, res.data.response_url, seedreamKey, "Seedream 5 Pro");
+          return result?.images?.[0]?.url || result?.image?.url || null;
+        } catch (err) {
+          console.error("[StepIntoHistory - Stage 3] Seedream 5 Pro error:", err?.response?.data || err.message);
+          return null;
+        }
+      })();
+
+      const stage3Results = await Promise.allSettled([gptPromise, musePromise, seedreamPromise]);
+      const successfulReferenceImages = [];
+      const modelLabels = ["GPT Image 2", "Meta Muse", "Seedream 5 Pro"];
+
+      stage3Results.forEach((r, idx) => {
+        if (r.status === "fulfilled" && r.value) {
+          console.log(`[StepIntoHistory - Stage 3] ${modelLabels[idx]} returned: ${r.value}`);
+          successfulReferenceImages.push(r.value);
+        }
+      });
+
+      if (successfulReferenceImages.length === 0) {
+        throw new Error("Failed to generate historical reference images. Please try with a different photo.");
+      }
+
+      console.log(`[StepIntoHistory - Stage 3] Total reference images obtained: ${successfulReferenceImages.length}`);
+
+      // -------------------------------------------------------------
+      // STAGE 4: Generate Video via Veo 3.1 Fast (Fixed VIDEO REQUEST)
+      // -------------------------------------------------------------
+      const sceneDesc = sceneDescription && sceneDescription.trim().length > 0 ? sceneDescription.trim() : "None";
+      const stage4VideoPrompt = `VIDEO REQUEST
+
+- Experience = ${experience || "Explore an Ancient Historical City"}
+- Role = ${role || "Traveler / Visitor"}
+- Style = ${style || "Historically Realistic"}
+- Scene Description = ${sceneDesc}
+
+VIDEO INSTRUCTION
+
+Use the supplied reference images to bring the requested historical experience to life.
+
+The same person shown in the reference images is experiencing the selected Experience as the selected Role. Follow the selected Style for the overall feeling and presentation. If a Scene Description is provided, incorporate it naturally into the video.
+
+Preserve the person's recognizable identity, sharp facial details, historical clothing, and overall appearance from the supplied reference images. Preserve the historical environment established in the references and make it feel like a real, populated, living historical world.
+
+Create smooth, natural, realistic movement and expressions appropriate to the Experience and Role. Maintain steady cinematic camera framing focused on the protagonist without jitter or facial warping. Keep the person's face consistent, sharp, and recognizable throughout.
+
+Photorealistic, cinematic, sharp facial detail, natural human motion, realistic environmental movement, one coherent scene, one protagonist, no modern elements.`;
+
+      let formattedAspect = "16:9";
+      if (aspectRatio === "9:16" || aspectRatio === "portrait") {
+        formattedAspect = "9:16";
+      } else if (aspectRatio === "1:1") {
+        formattedAspect = "1:1";
+      }
+
+      // Google Veo 3.1 API Reference Images Specification:
+      // When referenceImages is used, Google Veo strictly requires durationSeconds: 8.
+      // (4s and 6s with referenceImages trigger 'Your use case is currently not supported').
+      let durationSec = 8;
+      const requestedDurationNumber = requestedSec;
+
+      const totalDurationSec = parseInt(totalDuration) || durationSec;
+      const googleVeoKey =
+        totalDurationSec > 8
+          ? process.env.GOOGLE_VEO_EXTEND_API_KEY
+          : process.env.GOOGLE_VEO_BASE_API_KEY;
+
+      const shouldGenerateAudio =
+        includeAudio === "yes" ||
+        includeAudio === "true" ||
+        includeAudio === true;
+
+      let videoBuffer = null;
+      let responseContentType = "video/mp4";
+      let googleVideoCleanUri = null;
+
+      // -------------------------------------------------------------
+      // STAGE 4: Generate Video via Google Native Veo 3.1 Fast (Strictly Native Google API)
+      // -------------------------------------------------------------
+      if (!googleVeoKey) {
+        throw new Error("Google Veo API Key is not configured on the server.");
+      }
+
+      console.log(`[StepIntoHistory - Stage 4] Calling Google Native Veo 3.1 Fast with ${durationSec}s and ${successfulReferenceImages.length} reference images (Total requested: ${totalDurationSec}s)`);
+      
+      // Download all reference images generated in Stage 3 (up to 3 images)
+      const downloadedImages = await Promise.all(
+        successfulReferenceImages.slice(0, 3).map(async (imgUrl, i) => {
+          try {
+            const dl = await axios.get(imgUrl, { responseType: "arraybuffer", timeout: 30000 });
+            return {
+              bytesBase64Encoded: Buffer.from(dl.data).toString("base64"),
+              mimeType: dl.headers["content-type"] || "image/png",
+            };
+          } catch (e) {
+            console.error(`[StepIntoHistory - Stage 4] Failed to download reference image ${i}:`, e.message);
+            return null;
+          }
+        })
+      );
+
+      const validDownloadedImages = downloadedImages.filter((img) => img !== null);
+      if (validDownloadedImages.length === 0) {
+        throw new Error("Failed to process reference images for Veo video generation.");
+      }
+
+      const googleBaseEndpoint = process.env.GOOGLE_VEO_BASE_ENDPOINT || "https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:predictLongRunning";
+      const googleEndpoint = `${googleBaseEndpoint}?key=${googleVeoKey}`;
+
+      const referenceImagesPayload = validDownloadedImages.map((img) => ({
+  image: {
+    bytesBase64Encoded: img.bytesBase64Encoded,
+    mimeType: img.mimeType,
+  },
+  referenceType: "asset",
+}));
+
+      const instanceObj = {
+        prompt: stage4VideoPrompt,
+        referenceImages: referenceImagesPayload,
+      };
+
+      const instances = [instanceObj];
+
+      const parameters = {
+        aspectRatio: formattedAspect,
+        durationSeconds: durationSec,
+      };
+
+      console.log(`[StepIntoHistory - Stage 4] Sending payload with ${referenceImagesPayload.length} reference images, aspectRatio: ${formattedAspect}, duration: ${durationSec}s, personGeneration: allow_adult`);
+
+      const initRes = await axios.post(
+        googleEndpoint,
+        { instances, parameters },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": googleVeoKey,
+          },
+          timeout: 60000,
+        }
+      );
+
+      const opName = initRes.data?.name;
+      if (!opName) {
+        throw new Error("Google Veo did not return a valid operation name.");
+      }
+
+      console.log(`[StepIntoHistory - Stage 4] Google Veo operation created: ${opName}. Polling for completion...`);
+
+      for (let attempt = 0; attempt < 60; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const pollUrl = `https://generativelanguage.googleapis.com/v1beta/${opName}?key=${googleVeoKey}`;
+        const opCheck = await axios.get(pollUrl, {
+          headers: { "x-goog-api-key": googleVeoKey },
+          timeout: 30000,
+        });
+
+        if (opCheck.data?.done) {
+          if (opCheck.data?.error) {
+            throw new Error(`Google Veo Error: ${opCheck.data.error.message || JSON.stringify(opCheck.data.error)}`);
+          }
+
+          const targetVideo = opCheck.data?.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
+          if (targetVideo?.uri) {
+            const dlRes = await axios.get(targetVideo.uri, {
+              headers: { "x-goog-api-key": googleVeoKey },
+              responseType: "arraybuffer",
+              timeout: 60000,
+            });
+            videoBuffer = Buffer.from(dlRes.data);
+            responseContentType = dlRes.headers["content-type"] || "video/mp4";
+
+            let cUri = targetVideo.uri;
+            if (cUri.includes(":download")) {
+              cUri = cUri.split(":download")[0];
+            }
+            googleVideoCleanUri = cUri;
+            break;
+          } else if (targetVideo?.bytesBase64Encoded) {
+            videoBuffer = Buffer.from(targetVideo.bytesBase64Encoded, "base64");
+            responseContentType = "video/mp4";
+            break;
+          }
+        }
+      }
+
+      if (!videoBuffer) {
+        throw new Error("Google Veo video generation timed out or returned empty video.");
+      }
+
+      // Deduct credits (bypassed for super admin testing)
+      if (!isSuperAdmin) {
+        await User.findByIdAndUpdate(req.user.id, {
+          $inc: { video_credits: -creditCost },
+        });
+      }
+
+      res.set("Content-Type", responseContentType);
+      if (googleVideoCleanUri) {
+        res.set("x-google-video-uri", googleVideoCleanUri);
+        res.set("Access-Control-Expose-Headers", "x-google-video-uri");
+      }
+
+      console.log(`[StepIntoHistory] Success! Video generated (${videoBuffer.length} bytes), Google URI: ${googleVideoCleanUri}`);
+      return res.send(videoBuffer);
+    } catch (err) {
+      console.error("[StepIntoHistory Error]:", err?.response?.data || err.message);
+      const statusCode = err?.response?.status || 500;
+      let userMessage = err?.message || "Failed to process Step Into History video.";
+      if (err?.response?.data?.error?.message) {
+        userMessage = err.response.data.error.message;
+      }
+      return res.status(statusCode).json({ success: false, error: userMessage });
+    }
+  }
+);
+
 module.exports = router;
+
