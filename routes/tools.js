@@ -20,7 +20,11 @@ const {
   aiService,
 } = require("../utils/aiService");
 const PromptHistory = require("../models/PromptHistory");
-const { checkSafety } = require("../utils/safetyGate");
+const {
+  checkSafety,
+  checkSacredFiguresPolicy,
+  SACRED_FIGURES_ERROR_MESSAGE,
+} = require("../utils/safetyGate");
 const {
   saveViolation,
   getBlockMessage,
@@ -685,6 +689,15 @@ router.post(
     );
     if (!isSafe) return;
 
+    // Content Moderation: Protected Sacred Figures Policy Check
+    const sacredCheck = checkSacredFiguresPolicy([prompt]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
+      });
+    }
+
     try {
       // 1. Fetch user
       const user = await User.findById(req.user.id);
@@ -964,6 +977,15 @@ router.post(
       "ai-filter",
     );
     if (!isSafe) return;
+
+    // Content Moderation: Protected Sacred Figures Policy Check
+    const sacredCheck = checkSacredFiguresPolicy([sanitizedPrompt, style]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
+      });
+    }
 
     try {
       const user = await User.findById(req.user.id);
@@ -1471,6 +1493,16 @@ router.post(
       "generate-video",
     );
     if (!isSafe) return;
+
+    // Content Moderation: Protected Sacred Figures Policy Check
+    const sacredCheck = checkSacredFiguresPolicy([prompt]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
+      });
+    }
+
     prompt = `${prompt.trim()}, depicted in a peaceful, calm, and highly serene environment. Completely safe for all audiences, National Geographic documentary style, no violence, no aggression.`;
 
     try {
@@ -3987,6 +4019,15 @@ router.post(
       if (!isSafe2) return;
     }
 
+    // Content Moderation: Protected Sacred Figures Policy Check
+    const sacredCheck = checkSacredFiguresPolicy([prompt]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
+      });
+    }
+
     try {
       // 1. Fetch user
       const user = await User.findById(req.user.id);
@@ -4161,6 +4202,15 @@ router.post(
       return res.status(400).json({
         success: false,
         error: "A prompt is required for video generation.",
+      });
+    }
+
+    // Content Moderation: Protected Sacred Figures Policy Check
+    const sacredCheck = checkSacredFiguresPolicy([prompt]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
       });
     }
 
@@ -4389,18 +4439,16 @@ router.post(
                     });
                   }
 
-                  // 👇 Clean the URI (Remove the :download?alt=media part)
-                  let cleanUri = targetVideo.uri;
-                  if (cleanUri.includes(":download")) {
-                    cleanUri = cleanUri.split(":download")[0];
-                  }
+                  // Google Veo Extension API specifically requires the full download URI:
+                  // "https://generativelanguage.googleapis.com/v1beta/files/...:download?alt=media"
+                  const fullGoogleUri = targetVideo.uri;
 
                   res.set(
                     "Content-Type",
                     dlRes.headers["content-type"] || "video/mp4",
                   );
-                  // 👇 Send Cleaned Google URI to frontend
-                  res.set("x-google-video-uri", cleanUri);
+                  // Send full Google URI to frontend
+                  res.set("x-google-video-uri", fullGoogleUri);
                   res.set(
                     "Access-Control-Expose-Headers",
                     "x-google-video-uri",
@@ -4653,6 +4701,15 @@ router.post(
       googleVideoUri,
     } = req.body;
 
+    // Content Moderation: Protected Sacred Figures Policy Check
+    const sacredCheck = checkSacredFiguresPolicy([prompt]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
+      });
+    }
+
     try {
       const user = await User.findById(req.user.id);
       if (!user)
@@ -4707,12 +4764,13 @@ router.post(
         uploadedVideoBase64 = b64;
       }
 
-      let cleanUri = (googleVideoUri && typeof googleVideoUri === "string") ? googleVideoUri.trim() : null;
-      if (cleanUri && cleanUri.includes(":download")) {
-        cleanUri = cleanUri.split(":download")[0];
+      let targetGoogleUri = (googleVideoUri && typeof googleVideoUri === "string") ? googleVideoUri.trim() : null;
+      if (targetGoogleUri && !targetGoogleUri.includes(":download")) {
+        // Ensure proper Google download URI format expected by Google Veo
+        targetGoogleUri = `${targetGoogleUri}:download?alt=media`;
       }
 
-      if (!cleanUri && !uploadedVideoBase64) {
+      if (!targetGoogleUri && !uploadedVideoBase64) {
         return res.status(400).json({
           success: false,
           error: "Missing video input. Provide either a valid googleVideoUri or an initial video file/base64 buffer.",
@@ -4741,74 +4799,109 @@ router.post(
         includeAudio === "true" ||
         includeAudio === true;
 
-      // When URI is available, pass native Google URI. Otherwise fallback to Base64
-      const videoPayload = cleanUri
-        ? { uri: cleanUri }
-        : { bytesBase64Encoded: uploadedVideoBase64, mimeType: uploadedVideoMime };
-
-      // 🔥 Enrich prompt with natural storytelling continuation + absolute facial geometry and identity preservation
-      let extensionPrompt = prompt ? prompt.trim() : "";
-      const continuationDirectives = `MANDATORY IDENTITY, FACIAL GEOMETRY & CAMERA LOCK (HIGHEST PRIORITY):
-1. CHRONOLOGICAL CONTINUATION: This is a direct real-time continuation of the preceding video scene. Maintain seamless continuity from the exact last frame.
-2. ABSOLUTE FACIAL LOCK: The central protagonist MUST remain 100% IDENTICAL to the preceding video clip. Preserve the exact same facial bone structure, jawline, eye shape, nose shape, mouth, natural expression, skin tone, hairstyle, and outfit.
-3. ZERO FACIAL MORPHING: Do NOT alter facial proportions, do NOT morph the face, do NOT enlarge or distort facial features, and do NOT change ethnic appearance or age. 
-4. CAMERA & FRAMING STABILITY: Maintain consistent cinematic camera distance and framing (medium waist-up shot) matching the preceding scene. Do NOT aggressively zoom in onto the face, and do NOT distort facial perspective.
-5. NATURAL SCENE ACTION: Continue natural body movement, walking, and ambient environmental action smoothly in the exact same historical setting without jumping or replacing the character.`;
+      // 🔥 Enrich prompt with strict camera lock, front-facing framing, absolute facial geometry and zero drift
+      let extensionPrompt = "Seamless continuous continuation of the exact preceding video scene. Maintain the exact same camera angle, subject framing, face identity, clothing, and background without any camera shift or facial morphing.";
       
-      if (extensionPrompt) {
-        // Clean out any conflicting "supplied reference images" instructions from extension prompts
-        extensionPrompt = extensionPrompt
-          .replace(/Use the supplied reference images to bring the requested historical experience to life\./gi, "")
-          .replace(/from the supplied reference images/gi, "from the preceding video")
+      if (prompt && prompt.trim()) {
+        const cleanContext = prompt
+          .replace(/CRITICAL MANDATORY INSTRUCTIONS[\s\S]*/gi, "")
+          .replace(/Use the supplied reference images[\s\S]*/gi, "")
           .trim();
-        extensionPrompt = `${extensionPrompt}\n\n${continuationDirectives}`;
-      } else {
-        extensionPrompt = continuationDirectives;
+        if (cleanContext) {
+          extensionPrompt = `${extensionPrompt} Context: ${cleanContext}`;
+        }
+      }
+
+      // Google Gemini Veo REST API schema uses:
+      // "video": {"uri": "https://generativelanguage.googleapis.com/v1beta/files/...:download?alt=media"}
+      let videoObj = null;
+      if (targetGoogleUri) {
+        videoObj = { uri: targetGoogleUri };
+      } else if (uploadedVideoBase64) {
+        videoObj = {
+          bytesBase64Encoded: uploadedVideoBase64,
+          mimeType: uploadedVideoMime || "video/mp4",
+        };
       }
 
       const instances = [
         {
           prompt: extensionPrompt,
-          video: videoPayload,
+          video: videoObj,
         },
       ];
 
-      // Google Veo parameters: standard aspectRatio, durationSeconds, and personGeneration
+      // Google Veo parameters for extension:
       const parameters = {
         aspectRatio: formattedAspect,
         durationSeconds: extendSec,
-        personGeneration: "allow_adult",
       };
 
       const googleEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/veo-3.1-fast-generate-preview:predictLongRunning?key=${googleExtendKey}`;
 
-      console.log(
-        `[Google Veo Extend] Calling ${extendSec}s with ${cleanUri ? 'URI: ' + cleanUri : 'Base64 video buffer'}`
-      );
-
-      const initialGoogleRes = await axios.post(
-        googleEndpoint,
-        { instances, parameters },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "x-goog-api-key": googleExtendKey,
+      let operationName = null;
+      try {
+        const initialGoogleRes = await axios.post(
+          googleEndpoint,
+          { instances, parameters },
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": googleExtendKey,
+            },
+            timeout: 60000,
           },
-          timeout: 60000,
-        },
-      );
+        );
+        operationName = initialGoogleRes.data?.name;
+      } catch (initErr) {
+        if (
+          targetGoogleUri &&
+          uploadedVideoBase64 &&
+          initErr?.response?.data?.error?.message?.includes("Input video must be a video that was generated by VEO")
+        ) {
+          console.warn("[Google Veo Extend] Google URI not yet ready/indexed on Google server. Retrying with direct Base64 buffer...");
+          const fallbackInstances = [
+            {
+              prompt: extensionPrompt,
+              video: {
+                bytesBase64Encoded: uploadedVideoBase64,
+                mimeType: uploadedVideoMime || "video/mp4",
+              },
+            },
+          ];
+          const fallbackRes = await axios.post(
+            googleEndpoint,
+            { instances: fallbackInstances, parameters },
+            {
+              headers: {
+                "Content-Type": "application/json",
+                "x-goog-api-key": googleExtendKey,
+              },
+              timeout: 60000,
+            },
+          );
+          operationName = fallbackRes.data?.name;
+        } else {
+          throw initErr;
+        }
+      }
 
-      const operationName = initialGoogleRes.data?.name;
       if (!operationName)
         throw new Error("Google Veo did not return a valid operation name.");
 
-      for (let attempt = 0; attempt < 60; attempt++) {
+      for (let attempt = 0; attempt < 120; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 5000));
         const pollUrl = `https://generativelanguage.googleapis.com/v1beta/${operationName}?key=${googleExtendKey}`;
-        const opCheck = await axios.get(pollUrl, {
-          headers: { "x-goog-api-key": googleExtendKey },
-          timeout: 30000,
-        });
+        let opCheck = null;
+        try {
+          opCheck = await axios.get(pollUrl, {
+            headers: { "x-goog-api-key": googleExtendKey },
+            timeout: 30000,
+          });
+        } catch (pollErr) {
+          console.warn(`[Google Veo Extend] Polling attempt ${attempt + 1} transient error:`, pollErr.message);
+          continue;
+        }
 
         if (opCheck.data?.done) {
           if (opCheck.data?.error)
@@ -4834,17 +4927,14 @@ router.post(
               });
             }
 
-            // નવો URI પાછો મોકલો
-            let nextCleanUri = targetVideo.uri;
-            if (nextCleanUri.includes(":download")) {
-              nextCleanUri = nextCleanUri.split(":download")[0];
-            }
+            // Return the full Google URI so subsequent extensions in 30s/45s/60s chain succeed
+            const nextGoogleUri = targetVideo.uri;
 
             res.set(
               "Content-Type",
               dlRes.headers["content-type"] || "video/mp4",
             );
-            res.set("x-google-video-uri", nextCleanUri);
+            res.set("x-google-video-uri", nextGoogleUri);
             res.set("Access-Control-Expose-Headers", "x-google-video-uri");
             return res.send(Buffer.from(dlRes.data));
           }
@@ -5164,6 +5254,21 @@ router.post(
 
     const files = req.files || [];
 
+    // Content Moderation: Protected Sacred Figures Policy Check across all user inputs
+    const sacredCheck = checkSacredFiguresPolicy([
+      historicalContext,
+      experience,
+      role,
+      style,
+      sceneDescription,
+    ]);
+    if (sacredCheck.blocked) {
+      return res.status(400).json({
+        success: false,
+        error: sacredCheck.message,
+      });
+    }
+
     try {
       // 1. Fetch user & validate subscription/credits
       const user = await User.findById(req.user.id);
@@ -5230,10 +5335,22 @@ router.post(
 
       console.log("[StepIntoHistory] User image ready (starts with):", userImageUrl.substring(0, 50) + "...");
 
+      // Normalize Aspect Ratio (One Source of Truth)
+      let formattedAspect = "16:9";
+      if (aspectRatio === "9:16" || aspectRatio === "portrait") {
+        formattedAspect = "9:16";
+      } else if (aspectRatio === "1:1") {
+        formattedAspect = "1:1";
+      }
+      const isVertical = formattedAspect === "9:16";
+      const aspectDescription = isVertical
+        ? "Vertical (9:16 portrait orientation). The composition should work naturally in a tall frame, with the protagonist clearly visible and enough historical environment around the person."
+        : "Horizontal (16:9 landscape orientation). The composition should use the wider frame to show more of the rich historical environment while keeping the protagonist clear and recognizable.";
+
       // -------------------------------------------------------------
       // STAGE 2: Get Image Prompt from Claude Sonnet 5
       // -------------------------------------------------------------
-      console.log("[StepIntoHistory - Stage 2] Requesting image prompt from Claude Sonnet 5...");
+      console.log(`[StepIntoHistory - Stage 2] Requesting image prompt from Claude Sonnet 5 with Aspect Ratio: ${formattedAspect}...`);
       const claudeProvider = await AIProvider.findOne({
         name: "anthropic",
         is_active: true,
@@ -5249,7 +5366,7 @@ Write ONE detailed image-edit prompt using the request below.
 
 REQUIREMENTS
 1. Identity preservation is the highest priority. Keep the exact same recognizable person: sharp clear face, facial structure, skin tone, hairstyle, facial expressions, approximate age, body type, and overall likeness.
-2. Frame the subject in a cinematic MEDIUM SHOT (waist-up / chest-up portrait) with the protagonist prominently featured and in razor-sharp focus in the foreground, showing the rich, populated historical background behind them. Avoid tiny distant full-body framing.
+2. Frame the subject in a cinematic MEDIUM SHOT (waist-up / chest-up portrait) with the protagonist prominently featured and in razor-sharp focus in the foreground, showing the rich, populated historical background behind them. Avoid tiny distant full-body framing. Compose the scene specifically for the target aspect ratio and orientation.
 3. Transform modern clothing and accessories into historically accurate and detailed clothing for the selected role and period.
 4. Remove modern clothing, technology, logos, watches, and modern objects unless specifically required.
 5. Create a complete, populated, believable living historical environment behind and around the protagonist.
@@ -5262,13 +5379,14 @@ REQUIREMENTS
 12. Output ONLY the final image-generation prompt.`;
 
       const userClaudePrompt = `HISTORICAL REQUEST
+- Target Aspect Ratio = ${formattedAspect} (${aspectDescription})
 - Historical Context = ${historicalContext || "Historical Era"}
 - Experience = ${experience || "Explore the City"}
 - Role = ${role || "Traveler / Visitor"}
 - Style = ${style || "Historically Realistic"}
 - Scene Description = ${sceneDescription || "blank"}
 
-The image model will also receive ONE uploaded photo as the identity reference.`;
+The image model will also receive ONE uploaded photo as the identity reference. Compose the scene specifically for a ${formattedAspect} frame.`;
 
       const claudeRes = await axios.post(
         `${claudeProvider.base_url || "https://api.anthropic.com"}/v1/messages`,
@@ -5292,12 +5410,21 @@ The image model will also receive ONE uploaded photo as the identity reference.`
       if (!stage2ImagePrompt) {
         throw new Error("Claude Sonnet 5 failed to generate the historical image prompt.");
       }
+
+      // Layer D: Post-Prompt Defense - Check the Claude-generated prompt before calling paid image models
+      const postPromptSacredCheck = checkSacredFiguresPolicy([stage2ImagePrompt]);
+      if (postPromptSacredCheck.blocked) {
+        return res.status(400).json({
+          success: false,
+          error: postPromptSacredCheck.message,
+        });
+      }
       console.log("[StepIntoHistory - Stage 2] Claude image prompt:\n", stage2ImagePrompt);
 
       // -------------------------------------------------------------
       // STAGE 3: Generate 3 Reference Images in Parallel (Fal.ai)
       // -------------------------------------------------------------
-      console.log("[StepIntoHistory - Stage 3] Generating 3 reference images in parallel via Fal.ai...");
+      console.log(`[StepIntoHistory - Stage 3] Generating 3 reference images in parallel via Fal.ai with Aspect Ratio: ${formattedAspect}...`);
 
       const gptKey = (process.env.FAL_KEY_GPT_IMAGE_2 || "").replace(/['"]/g, "").trim();
       const museKey = (process.env.FAL_KEY_META_MUSE || "").replace(/['"]/g, "").trim();
@@ -5337,13 +5464,22 @@ The image model will also receive ONE uploaded photo as the identity reference.`
         return null;
       };
 
+      // Model size configurations for Fal.ai models
+      const falImageSize = isVertical ? "portrait_16_9" : "landscape_16_9";
+
       // 1. GPT Image 2 (Medium Quality)
       const gptUrl = process.env.FAL_URL_GPT_IMAGE_2 || "https://queue.fal.run/openai/gpt-image-2/edit";
       const gptPromise = (async () => {
         try {
           const res = await axios.post(
             gptUrl,
-            { prompt: stage2ImagePrompt, image_urls: [userImageUrl], quality: "medium" },
+            {
+              prompt: stage2ImagePrompt,
+              image_urls: [userImageUrl],
+              quality: "medium",
+              aspect_ratio: formattedAspect,
+              image_size: falImageSize,
+            },
             { headers: { Authorization: `Key ${gptKey}`, "Content-Type": "application/json" }, timeout: 45000 }
           );
           if (!res.data?.status_url) {
@@ -5363,7 +5499,12 @@ The image model will also receive ONE uploaded photo as the identity reference.`
         try {
           const res = await axios.post(
             museUrl,
-            { prompt: stage2ImagePrompt, image_urls: [userImageUrl] },
+            {
+              prompt: stage2ImagePrompt,
+              image_urls: [userImageUrl],
+              aspect_ratio: formattedAspect,
+              image_size: falImageSize,
+            },
             { headers: { Authorization: `Key ${museKey}`, "Content-Type": "application/json" }, timeout: 45000 }
           );
           if (!res.data?.status_url) {
@@ -5383,7 +5524,12 @@ The image model will also receive ONE uploaded photo as the identity reference.`
         try {
           const res = await axios.post(
             seedreamUrl,
-            { prompt: stage2ImagePrompt, image_urls: [userImageUrl] },
+            {
+              prompt: stage2ImagePrompt,
+              image_urls: [userImageUrl],
+              aspect_ratio: formattedAspect,
+              image_size: falImageSize,
+            },
             { headers: { Authorization: `Key ${seedreamKey}`, "Content-Type": "application/json" }, timeout: 45000 }
           );
           if (!res.data?.status_url) {
@@ -5414,9 +5560,15 @@ The image model will also receive ONE uploaded photo as the identity reference.`
 
       console.log(`[StepIntoHistory - Stage 3] Total reference images obtained: ${successfulReferenceImages.length}`);
 
-      // -------------------------------------------------------------
-      // STAGE 4: Generate Video via Veo 3.1 Fast (Fixed VIDEO REQUEST)
-      // -------------------------------------------------------------
+      const shouldGenerateAudio =
+        includeAudio === "yes" ||
+        includeAudio === "true" ||
+        includeAudio === true;
+
+      const audioInstruction = shouldGenerateAudio
+        ? "Immersive authentic historical ambient environmental soundscapes."
+        : "";
+
       const sceneDesc = sceneDescription && sceneDescription.trim().length > 0 ? sceneDescription.trim() : "None";
       const stage4VideoPrompt = `VIDEO REQUEST
 
@@ -5434,15 +5586,8 @@ The same person shown in the reference images is experiencing the selected Exper
 Preserve the person's recognizable identity, sharp facial details, historical clothing, and overall appearance from the supplied reference images. Preserve the historical environment established in the references and make it feel like a real, populated, living historical world.
 
 Create smooth, natural, realistic movement and expressions appropriate to the Experience and Role. Maintain steady cinematic camera framing focused on the protagonist without jitter or facial warping. Keep the person's face consistent, sharp, and recognizable throughout.
-
+${audioInstruction ? `\n${audioInstruction}\n` : ""}
 Photorealistic, cinematic, sharp facial detail, natural human motion, realistic environmental movement, one coherent scene, one protagonist, no modern elements.`;
-
-      let formattedAspect = "16:9";
-      if (aspectRatio === "9:16" || aspectRatio === "portrait") {
-        formattedAspect = "9:16";
-      } else if (aspectRatio === "1:1") {
-        formattedAspect = "1:1";
-      }
 
       // Google Veo 3.1 API Reference Images Specification:
       // When referenceImages is used, Google Veo strictly requires durationSeconds: 8.
@@ -5455,11 +5600,6 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
         totalDurationSec > 8
           ? process.env.GOOGLE_VEO_EXTEND_API_KEY
           : process.env.GOOGLE_VEO_BASE_API_KEY;
-
-      const shouldGenerateAudio =
-        includeAudio === "yes" ||
-        includeAudio === "true" ||
-        includeAudio === true;
 
       let videoBuffer = null;
       let responseContentType = "video/mp4";
@@ -5518,7 +5658,7 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
         durationSeconds: durationSec,
       };
 
-      console.log(`[StepIntoHistory - Stage 4] Sending payload with ${referenceImagesPayload.length} reference images, aspectRatio: ${formattedAspect}, duration: ${durationSec}s, personGeneration: allow_adult`);
+      console.log(`[StepIntoHistory - Stage 4] Sending payload with ${referenceImagesPayload.length} reference images, aspectRatio: ${formattedAspect}, duration: ${durationSec}s`);
 
       const initRes = await axios.post(
         googleEndpoint,
@@ -5539,20 +5679,34 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
 
       console.log(`[StepIntoHistory - Stage 4] Google Veo operation created: ${opName}. Polling for completion...`);
 
-      for (let attempt = 0; attempt < 60; attempt++) {
+      for (let attempt = 0; attempt < 120; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, 5000));
         const pollUrl = `https://generativelanguage.googleapis.com/v1beta/${opName}?key=${googleVeoKey}`;
-        const opCheck = await axios.get(pollUrl, {
-          headers: { "x-goog-api-key": googleVeoKey },
-          timeout: 30000,
-        });
+        let opCheck = null;
+        try {
+          opCheck = await axios.get(pollUrl, {
+            headers: { "x-goog-api-key": googleVeoKey },
+            timeout: 30000,
+          });
+        } catch (pollErr) {
+          console.warn(`[StepIntoHistory - Stage 4] Polling attempt ${attempt + 1} transient error:`, pollErr.message);
+          continue;
+        }
 
-        if (opCheck.data?.done) {
+        if (opCheck && opCheck.data?.done) {
           if (opCheck.data?.error) {
             throw new Error(`Google Veo Error: ${opCheck.data.error.message || JSON.stringify(opCheck.data.error)}`);
           }
 
-          const targetVideo = opCheck.data?.response?.generateVideoResponse?.generatedSamples?.[0]?.video;
+          const resp = opCheck.data?.response;
+          if (resp?.generateVideoResponse?.raiMediaFilteredReasons?.length > 0) {
+            const reasons = resp.generateVideoResponse.raiMediaFilteredReasons.join(" ");
+            throw new Error(reasons);
+          }
+
+          const generatedSamples = resp?.generateVideoResponse?.generatedSamples || resp?.generatedSamples || [];
+          const targetVideo = generatedSamples[0]?.video || resp?.video || resp?.generatedSamples?.[0]?.video;
+
           if (targetVideo?.uri) {
             const dlRes = await axios.get(targetVideo.uri, {
               headers: { "x-goog-api-key": googleVeoKey },
@@ -5560,18 +5714,17 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
               timeout: 60000,
             });
             videoBuffer = Buffer.from(dlRes.data);
-            responseContentType = dlRes.headers["content-type"] || "video/mp4";
-
-            let cUri = targetVideo.uri;
-            if (cUri.includes(":download")) {
-              cUri = cUri.split(":download")[0];
-            }
-            googleVideoCleanUri = cUri;
+            // Google Veo Extension API requires the full download URI:
+            googleVideoCleanUri = targetVideo.uri;
+            console.log(`[StepIntoHistory - Stage 4] Google Veo video downloaded successfully (${videoBuffer.length} bytes)`);
             break;
           } else if (targetVideo?.bytesBase64Encoded) {
             videoBuffer = Buffer.from(targetVideo.bytesBase64Encoded, "base64");
             responseContentType = "video/mp4";
+            console.log(`[StepIntoHistory - Stage 4] Google Veo video base64 extracted (${videoBuffer.length} bytes)`);
             break;
+          } else {
+            console.warn("[StepIntoHistory - Stage 4] Operation done but unexpected response shape:", JSON.stringify(opCheck.data));
           }
         }
       }
@@ -5581,19 +5734,30 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
       }
 
       // Deduct credits (bypassed for super admin testing)
+      let updatedUser = null;
       if (!isSuperAdmin) {
-        await User.findByIdAndUpdate(req.user.id, {
-          $inc: { video_credits: -creditCost },
-        });
+        updatedUser = await User.findByIdAndUpdate(
+          req.user.id,
+          { $inc: { video_credits: -creditCost } },
+          { new: true }
+        );
+      } else {
+        updatedUser = await User.findById(req.user.id);
       }
 
       res.set("Content-Type", responseContentType);
+      if (updatedUser) {
+        res.set("x-remaining-credits", String(updatedUser.video_credits ?? 0));
+      }
       if (googleVideoCleanUri) {
         res.set("x-google-video-uri", googleVideoCleanUri);
-        res.set("Access-Control-Expose-Headers", "x-google-video-uri");
       }
+      res.set(
+        "Access-Control-Expose-Headers",
+        "x-google-video-uri, x-remaining-credits"
+      );
 
-      console.log(`[StepIntoHistory] Success! Video generated (${videoBuffer.length} bytes), Google URI: ${googleVideoCleanUri}`);
+      console.log(`[StepIntoHistory] Success! Video generated (${videoBuffer.length} bytes), Remaining credits: ${updatedUser?.video_credits}, Google URI: ${googleVideoCleanUri}`);
       return res.send(videoBuffer);
     } catch (err) {
       console.error("[StepIntoHistory Error]:", err?.response?.data || err.message);

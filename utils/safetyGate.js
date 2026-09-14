@@ -135,7 +135,271 @@ async function checkSafety(prompt, imageUrl = null) {
   }
 }
 
+const SACRED_FIGURES_ERROR_MESSAGE =
+  "Our system has detected that your request is in violation of our content moderation policy around sacred religious figures. Please change your request and try again.";
+
+// Extensible Protected Sacred Figures Registry
+const PROTECTED_FIGURES_REGISTRY = [
+  // 1. Divine / Deity Figures (All traditions)
+  {
+    category: "divine",
+    religion: "universal",
+    names: [
+      "god",
+      "allah",
+      "yahweh",
+      "jehovah",
+      "brahman",
+      "bhagwan",
+      "ishwar",
+      "deity",
+      "almighty",
+      "creator",
+    ],
+  },
+  // 2. Prophets (Abrahamic & others)
+  {
+    category: "prophet",
+    religion: "islam_judaism_christianity",
+    names: [
+      "prophet muhammad",
+      "prophet mohammad",
+      "prophet mohammed",
+      "rasool",
+      "rasulullah",
+      "nabi",
+      "final prophet",
+      "holy prophet",
+      "last prophet",
+      "jesus",
+      "jesus christ",
+      "prophet isa",
+      "isa al-masih",
+      "moses",
+      "prophet musa",
+      "musa",
+      "abraham",
+      "prophet ibrahim",
+      "ibrahim",
+      "adam",
+      "prophet adam",
+      "noah",
+      "prophet nuh",
+      "nuh",
+      "joseph",
+      "prophet yusuf",
+      "yusuf",
+      "david",
+      "prophet dawood",
+      "dawood",
+      "solomon",
+      "prophet sulaiman",
+      "sulaiman",
+      "jonah",
+      "prophet yunus",
+      "yunus",
+      "elijah",
+      "prophet ilyas",
+      "ilyas",
+      "john the baptist",
+      "prophet yahya",
+      "yahya",
+      "ishmael",
+      "prophet ismail",
+      "ismail",
+      "isaac",
+      "prophet ishaq",
+      "ishaq",
+      "jacob",
+      "prophet yaqub",
+      "yaqub",
+      "aaron",
+      "prophet harun",
+      "harun",
+    ],
+  },
+  // 3. Prophet Muhammad's Family / Ahl al-Bayt & Rightly Guided Caliphs
+  {
+    category: "sacred_figure",
+    religion: "islam",
+    names: [
+      "khadija",
+      "khadijah",
+      "aisha",
+      "ayesha",
+      "fatima",
+      "fatimah",
+      "ali ibn abi talib",
+      "hazrat ali",
+      "imam ali",
+      "imam hassan",
+      "imam hussain",
+      "abu bakr",
+      "umar ibn al-khattab",
+      "hazrat umar",
+      "uthman ibn affan",
+      "hazrat uthman",
+      "ahl al-bayt",
+      "wives of prophet",
+      "wife of the prophet",
+      "daughter of the prophet",
+    ],
+  },
+  // 4. Christian Sacred Figures
+  {
+    category: "christian_sacred",
+    religion: "christianity",
+    names: [
+      "jesus",
+      "jesus christ",
+      "christ",
+      "virgin mary",
+      "mother mary",
+      "holy spirit",
+      "son of god",
+    ],
+  },
+  // 5. Hindu Sacred Figures (Deities & Avatars)
+  {
+    category: "hindu_sacred",
+    religion: "hinduism",
+    names: [
+      "shiva",
+      "lord shiva",
+      "vishnu",
+      "lord vishnu",
+      "brahma",
+      "lord brahma",
+      "krishna",
+      "lord krishna",
+      "rama",
+      "lord rama",
+      "ram",
+      "lord ram",
+      "ganesha",
+      "lord ganesh",
+      "ganesh",
+      "hanuman",
+      "lord hanuman",
+      "bajrangbali",
+      "lakshmi",
+      "goddess lakshmi",
+      "saraswati",
+      "goddess saraswati",
+      "parvati",
+      "goddess parvati",
+      "durga",
+      "goddess durga",
+      "kali",
+      "goddess kali",
+      "radha",
+      "sita",
+      "mata sita",
+    ],
+  },
+  // 6. Sikh Sacred Figures
+  {
+    category: "sikh_sacred",
+    religion: "sikhism",
+    names: [
+      "guru nanak",
+      "guru nanak dev",
+      "guru gobind singh",
+      "guru granth sahib",
+      "sikh guru",
+    ],
+  },
+  // 7. Buddhist & Other Sacred Figures
+  {
+    category: "buddhist_other",
+    religion: "buddhism_other",
+    names: [
+      "gautama buddha",
+      "lord buddha",
+      "the buddha",
+      "siddhartha gautama",
+      "mahavira",
+      "lord mahavira",
+      "bahaullah",
+      "the bab",
+    ],
+  },
+];
+
+// Patterns that indicate active visual portrayal / depiction / impersonation
+const DEPICTION_PATTERNS = [
+  /\b(depict|depicting|portray|portraying|impersonate|impersonating|recreate|recreating|draw|drawing|generate|generating|paint|painting|illustrate|illustrating|show|showing|render|rendering|visualize|visualizing|create|creating)\b/i,
+  /\b(me as|myself as|transform me into|turn me into|make me|dress me as|look like|face of)\b/i,
+  /\b(with|beside|next to|standing with|talking to|meeting|interacting with|speaking with|face to face with)\b/i,
+  /\b(portrait of|photo of|video of|image of|picture of|close[- ]up of|view of|face of|appearance of|figure of)\b/i,
+];
+
+/**
+ * Checks if a combined text request violates the Protected Sacred Figures policy.
+ * @param {string|Array<string>} inputs Text fields to evaluate (prompt, experience, role, sceneDescription, etc.)
+ * @returns {{blocked: boolean, message: string, reason?: string, matchedFigure?: string}}
+ */
+function checkSacredFiguresPolicy(inputs) {
+  if (!inputs) return { blocked: false, message: "" };
+
+  let combinedText = "";
+  if (Array.isArray(inputs)) {
+    combinedText = inputs.filter(Boolean).join(" ");
+  } else if (typeof inputs === "object") {
+    combinedText = Object.values(inputs)
+      .filter((v) => typeof v === "string")
+      .join(" ");
+  } else {
+    combinedText = String(inputs);
+  }
+
+  if (!combinedText.trim()) return { blocked: false, message: "" };
+
+  // Normalize text: lowercase, remove excess spaces & special punctuation
+  const normalized = combinedText
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Fast Deterministic Registry Matching
+  for (const entry of PROTECTED_FIGURES_REGISTRY) {
+    for (const name of entry.names) {
+      const escaped = name.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+      const nameRegex = new RegExp(`\\b${escaped}\\b`, "i");
+
+      if (nameRegex.test(normalized)) {
+        const hasDepictionIntent = DEPICTION_PATTERNS.some((p) =>
+          p.test(normalized)
+        );
+
+        const directMentionIsObjective =
+          normalized.length < 60 ||
+          hasDepictionIntent ||
+          /\b(as|like|into)\b/i.test(normalized);
+
+        if (hasDepictionIntent || directMentionIsObjective) {
+          console.warn(
+            `[SafetyGate - SacredFigures] Blocked request for protected figure: "${name}" in category: ${entry.category}`
+          );
+          return {
+            blocked: true,
+            message: SACRED_FIGURES_ERROR_MESSAGE,
+            reason: "protected_sacred_figure_depiction",
+            matchedFigure: name,
+            category: entry.category,
+          };
+        }
+      }
+    }
+  }
+
+  return { blocked: false, message: "" };
+}
+
 module.exports = {
   checkSafety,
+  checkSacredFiguresPolicy,
+  SACRED_FIGURES_ERROR_MESSAGE,
 };
 

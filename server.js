@@ -155,7 +155,7 @@ app.use(
     origin: [
       "http://localhost:3000",
       "https://onechatai.ai",
-      "http://localhost:54657",
+      "http://localhost:60234",
       "http://localhost:5173",
     ],
     credentials: true,
