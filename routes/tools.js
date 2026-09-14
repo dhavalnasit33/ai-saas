@@ -533,25 +533,12 @@ const checkCombinedChatLimit = async (req, res, next) => {
       user[usageField].reset_at = new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
 
-    // Process the limit against the unified count
-    if (user[usageField].last_prompt_id !== promptId) {
-      if (user[usageField].count >= limit) {
-        return res.status(429).json({
-          success: false,
-          message: `You have exceeded your daily limit. Please upgrade your plan or try again in 24 hours.`,
-        });
-      }
-      user[usageField].count += 1;
-      user[usageField].last_prompt_id = promptId;
-      await user.save();
-    } else {
-      // Prevent rapid spamming of the exact same promptId
-      if (user[usageField].count > limit) {
-        return res.status(429).json({
-          success: false,
-          message: `You have exceeded your daily limit. Please upgrade your plan or try again in 24 hours.`,
-        });
-      }
+    // Check the limit against the unified count without incrementing (increment happens only on successful AI response)
+    if (user[usageField].count >= limit) {
+      return res.status(429).json({
+        success: false,
+        message: `You have exceeded your daily limit. Please upgrade your plan or try again in 24 hours.`,
+      });
     }
 
     next();
@@ -3305,6 +3292,32 @@ Strictly follow this word count. Respond fully according to the word count.`;
                 0,
                 user.remaining_tokens - tokensUsed,
               );
+
+              // Increment request count ONLY on successful AI response
+              const isText = req.body?.source && req.body.source.includes("-text");
+              if (isText) {
+                const usageField = "combined_chat_text_usage";
+                if (!user[usageField] || !user[usageField].reset_at) {
+                  user[usageField] = {
+                    count: 0,
+                    reset_at: new Date(Date.now() + 24 * 60 * 60 * 1000),
+                  };
+                }
+                if (new Date() > user[usageField].reset_at) {
+                  user[usageField].count = 0;
+                  user[usageField].reset_at = new Date(Date.now() + 24 * 60 * 60 * 1000);
+                }
+                let userLimit = 100;
+                if (user.plan === "pro") userLimit = 50;
+                else if (user.plan === "standard" || user.plan === "lite" || user.subscription_status === "trialing") userLimit = 50;
+                else if (user.plan === "basic") userLimit = 50;
+
+                user[usageField].count = Math.min(userLimit, user[usageField].count + 1);
+                if (req.body.promptId) {
+                  user[usageField].last_prompt_id = req.body.promptId;
+                }
+              }
+
               await user.save();
             }
 

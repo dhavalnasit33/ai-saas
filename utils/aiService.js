@@ -3366,6 +3366,18 @@ class AIService {
           imageUrl,
           max_tokens,
         );
+      case "muse":
+        return await this.callMuseStreaming(
+          provider,
+          model,
+          prompt,
+          systemPrompt,
+          onChunk,
+          onComplete,
+          onError,
+          imageUrl,
+          max_tokens,
+        );
       default:
         throw new Error(`Unsupported provider: ${provider.name}`);
     }
@@ -7655,7 +7667,7 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
       };
 
       // Conditionally add temperature only for models that support it
-      if (!["claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8", "claude-opus-5"].includes(model.model)) {
+      if (!["claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"].includes(model.model)) {
         payload.temperature = 0.7;
       }
 
@@ -9725,6 +9737,147 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
       if (onError) onError(error);
       throw new Error(
         `Nemotron streaming error: ${
+          error.response?.data?.error?.message || error.message
+        }`,
+      );
+    }
+  }
+
+  async callMuseStreaming(
+    provider,
+    model,
+    prompt,
+    systemPrompt,
+    onChunk,
+    onComplete,
+    onError,
+    imageUrl = null,
+    max_tokens = 4000,
+  ) {
+    try {
+      const messages = [{ role: "system", content: systemPrompt }];
+      const userMessage = { role: "user", content: [] };
+
+      userMessage.content.push({
+        type: "text",
+        text: this.ensureMarkdownPrompt(prompt),
+      });
+
+      if (imageUrl) {
+        userMessage.content.push({
+          type: "image_url",
+          image_url: { url: imageUrl },
+        });
+      }
+
+      if (!imageUrl) {
+        userMessage.content = this.ensureMarkdownPrompt(prompt);
+      }
+
+      messages.push(userMessage);
+
+      const response = await axios.post(
+        `${provider.base_url || "https://openrouter.ai/api"}/v1/chat/completions`,
+        {
+          model: model.model,
+          messages: messages,
+          max_tokens: max_tokens || provider.max_tokens,
+          temperature: 0.7,
+          stream: true,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${provider.api_key}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://your-app-domain.com",
+            "X-Title": "AI SaaS",
+          },
+          responseType: "stream",
+        },
+      );
+
+      let fullResponse = "";
+      let totalTokens = 0;
+      let buffer = ""; // Prevents split-line corruption across TCP packets
+
+      response.data.on("data", (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split("\n");
+        buffer = lines.pop(); // Keep incomplete line for next chunk
+
+        for (const line of lines) {
+          if (line.includes("[DONE]")) {
+            if (onComplete) {
+              onComplete({
+                fullResponse,
+                provider: provider.name,
+                model: model.model,
+                tokens_used: totalTokens || 1,
+              });
+            }
+            return;
+          }
+
+          if (line.startsWith("data: ")) {
+            try {
+              const dataStr = line.slice(6);
+              if (!dataStr.trim()) continue;
+
+              const data = JSON.parse(dataStr);
+              if (
+                data.choices &&
+                data.choices[0] &&
+                data.choices[0].delta &&
+                data.choices[0].delta.content
+              ) {
+                const content = data.choices[0].delta.content;
+                fullResponse += content;
+
+                if (onChunk) {
+                  onChunk({
+                    content,
+                    fullResponse,
+                    provider: provider.name,
+                    model: model.model,
+                  });
+                }
+              }
+              if (data.usage) {
+                totalTokens = data.usage.total_tokens;
+              }
+            } catch (parseError) {
+              console.error(
+                "Error parsing Muse streaming data:",
+                parseError,
+              );
+            }
+          }
+        }
+      });
+
+      response.data.on("end", () => {
+        if (onComplete) {
+          onComplete({
+            fullResponse,
+            provider: provider.name,
+            model: model.model,
+            tokens_used: totalTokens || 1,
+          });
+        }
+      });
+
+      response.data.on("error", (error) => {
+        console.error("Muse Stream error:", error);
+        if (onError) onError(error);
+      });
+    } catch (error) {
+      console.error(
+        "Muse (OpenRouter) streaming error:",
+        error.response?.data || error.message,
+      );
+      if (onError) onError(error);
+      throw new Error(
+        `Muse streaming error: ${
           error.response?.data?.error?.message || error.message
         }`,
       );

@@ -271,7 +271,7 @@ const seedData = async () => {
         api_key: process.env.DEEPSEEK_API_KEY || "your-deepseek-api-key",
         is_active: false,
         max_tokens: 4000,
-        model: "deepseek-chat",
+        model: "deepseek-v4-flash",
         base_url: "https://api.deepseek.com/v1",
         rate_limit: {
           requests_per_minute: 30,

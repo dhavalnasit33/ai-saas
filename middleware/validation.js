@@ -737,7 +737,8 @@ exports.validateAIProvider = [
       "pixverse",
       "ideogram",
       "recraft",
-      "bernini"
+      "bernini",
+      "muse"
     ])
     .withMessage("Invalid provider name"),
   body("display_name")

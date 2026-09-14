@@ -168,6 +168,7 @@ const aiProviderSchema = new mongoose.Schema(
         "ideogram",
         "recraft",
         "bernini",
+       "muse"
       ],
     },
     title: {
