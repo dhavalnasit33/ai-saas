@@ -62,20 +62,21 @@ async function checkSafety(prompt, imageUrl = null) {
 
       // 🛑 1. STRICT SCORE THRESHOLDS (Zero Tolerance Categories):
       // Catches rephrased & sneaky prompts for Nudity/Sexual, Minors, Self-Harm, Hate, Illicit Acts
-      const STRICT_THRESHOLDS = {
-        "sexual": 0.08,
-        "sexual/nudity": 0.08,
-        "sexual/minors": 0.02,
-        "self-harm": 0.08,
-        "self-harm/intent": 0.08,
-        "self-harm/instructions": 0.08,
-        "hate": 0.15,
-        "hate/threatening": 0.15,
-        "harassment": 0.20,
-        "harassment/threatening": 0.20,
-        "illicit": 0.15,
-        "illicit/violent": 0.15,
+       const STRICT_THRESHOLDS = {
+        "sexual": 0.45,
+        "sexual/nudity": 0.45,
+        "sexual/minors": 0.35, // 0.02 માંથી વધારીને 0.35 કર્યું (જેથી સામાન્ય વાર્તાઓ બ્લોક ન થાય)
+        "self-harm": 0.40,
+        "self-harm/intent": 0.40,
+        "self-harm/instructions": 0.40,
+        "hate": 0.45,
+        "hate/threatening": 0.45,
+        "harassment": 0.50,
+        "harassment/threatening": 0.50,
+        "illicit": 0.45,
+        "illicit/violent": 0.45,
       };
+
 
       for (const [cat, threshold] of Object.entries(STRICT_THRESHOLDS)) {
         if (scores[cat] !== undefined && scores[cat] > threshold) {

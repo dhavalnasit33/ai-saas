@@ -1766,7 +1766,7 @@ const customToolMappings = {
     Claude: "/claude",
     DeepSeek: "/deepseek",
     Perplexity: "/perplexity",
-    Llama: "/meta-ai",
+    Llama: "/llama",
     Grok: "/grok",
     Kimi: "/kimi",
     Mistral: "/mistral",

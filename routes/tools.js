@@ -3156,21 +3156,6 @@ router.post(
       req.setTimeout(0); // No request timeout
       res.setTimeout(0); // No response timeout
 
-      // Optional: send heartbeat every 2 seconds to keep SSE alive
-      // const heartbeat = setInterval(() => res.write(":\n\n"), 2000);
-      // const cleanupHeartbeat = () => clearInterval(heartbeat);
-      // 1. Define Heartbeat safely
-      heartbeat = setInterval(() => {
-        // Only write if connection is still writable
-        if (!res.writableEnded && !res.finished) {
-          res.write(":\n\n");
-        }
-      }, 2000);
-
-      cleanupHeartbeat = () => {
-        if (heartbeat) clearInterval(heartbeat);
-      };
-
       let finalSystemPrompt = system_prompt;
       if (wordcount) {
         finalSystemPrompt = `${system_prompt}
@@ -3197,16 +3182,12 @@ Strictly follow this word count. Respond fully according to the word count.`;
           const resumeUrl = `/uploads/${resumeFileName}`;
           const coverUrl = `/uploads/${coverFileName}`;
 
-          // Stop heartbeat
-          cleanupHeartbeat();
-
           return res.json({
             success: true,
             resume_docx_url: resumeUrl,
             cover_docx_url: coverUrl,
           });
         } catch (error) {
-          cleanupHeartbeat();
           console.error("❌ Word generation error:", error);
           return res.status(500).json({
             success: false,
@@ -3232,10 +3213,20 @@ Strictly follow this word count. Respond fully according to the word count.`;
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        // Connection: "keep-alive",
         Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       });
+
+      // Start Heartbeat ONLY after headers are written
+      heartbeat = setInterval(() => {
+        if (!res.writableEnded && !res.finished) {
+          res.write(":\n\n");
+        }
+      }, 2000);
+
+      cleanupHeartbeat = () => {
+        if (heartbeat) clearInterval(heartbeat);
+      };
 
       const startTime = Date.now();
       let fullResponse = "";
@@ -3330,32 +3321,38 @@ Strictly follow this word count. Respond fully according to the word count.`;
               search_results: searchResults || result.search_results || null,
             };
 
+            const safeResponseText = (result.fullResponse && result.fullResponse.trim()) ? result.fullResponse : "No response generated.";
+
             await ChatService.addAssistantMessage(
               chat._id,
               userId,
-              result.fullResponse,
+              safeResponseText,
               metadata,
             );
             await ChatService.updateChatTitle(chat._id, userId);
 
-            res.write(
-              `data: ${JSON.stringify({
-                type: "complete",
-                chat_id: chat._id,
-                fullResponse: result.fullResponse,
-              })}\n\n`,
-            );
-            res.write("data: [DONE]\n\n");
-            res.end();
+            if (!res.writableEnded) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: "complete",
+                  chat_id: chat._id,
+                  fullResponse: safeResponseText,
+                })}\n\n`,
+              );
+              res.write("data: [DONE]\n\n");
+              res.end();
+            }
           } catch (dbError) {
             console.error("Database error:", dbError);
-            res.write(
-              `data: ${JSON.stringify({
-                type: "error",
-                message: "Failed to save response data",
-              })}\n\n`,
-            );
-            res.end();
+            if (!res.writableEnded) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: "error",
+                  message: "Failed to save response data",
+                })}\n\n`,
+              );
+              res.end();
+            }
           }
         },
         async (error) => {
@@ -3435,7 +3432,7 @@ Strictly follow this word count. Respond fully according to the word count.`;
           message: "Server error",
           error: error.message,
         });
-      } else {
+      } else if (!res.writableEnded) {
         // If streaming started, try to close it cleanly
         res.write(
           `data: ${JSON.stringify({ type: "error", message: error.message })}\n\n`,
@@ -3457,19 +3454,11 @@ router.post(
     try {
       const { prompt, modelId, imageUrl } = req.body;
 
-      if (!prompt || typeof prompt !== "string" || prompt.trim() === "") {
-        return res.status(400).json({
-          success: false,
-          message: "Prompt is required and must be a non-empty string",
-        });
-      }
-
-      // Set headers for Server-Sent Events (SSE) streaming
-      res.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
+      // Set headers for Server-Sent Events
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("Access-Control-Allow-Origin", "*");
 
       const startTime = Date.now();
       let fullResponse = "";
@@ -3478,12 +3467,14 @@ router.post(
       let searchResults = null;
 
       // Send initial metadata event
-      res.write(
-        `data: ${JSON.stringify({
-          type: "start",
-          timestamp: new Date().toISOString(),
-        })}\n\n`,
-      );
+      if (!res.writableEnded) {
+        res.write(
+          `data: ${JSON.stringify({
+            type: "start",
+            timestamp: new Date().toISOString(),
+          })}\n\n`,
+        );
+      }
 
       try {
         await generateStreamingAIResponse(
@@ -3494,76 +3485,94 @@ router.post(
           (chunk) => {
             if (chunk.type === "search_results") {
               searchResults = processSearchResults(chunk.search_results);
-              res.write(
-                `data: ${JSON.stringify({
-                  type: "search_results",
-                  search_results: searchResults,
-                })}\n\n`,
-              );
+              if (!res.writableEnded) {
+                res.write(
+                  `data: ${JSON.stringify({
+                    type: "search_results",
+                    search_results: searchResults,
+                  })}\n\n`,
+                );
+              }
               return;
             }
             fullResponse = chunk.fullResponse;
             provider = chunk.provider;
             model = chunk.model;
 
-            res.write(
-              `data: ${JSON.stringify({
-                type: "chunk",
-                content: chunk.content,
-                fullResponse: chunk.fullResponse,
-              })}\n\n`,
-            );
+            if (!res.writableEnded) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: "chunk",
+                  content: chunk.content,
+                  fullResponse: chunk.fullResponse,
+                })}\n\n`,
+              );
+            }
           },
           // onComplete callback
           async (result) => {
             const responseTime = Date.now() - startTime;
 
             // No history logic here!
-            res.write(
-              `data: ${JSON.stringify({
-                type: "complete",
-                fullResponse: result.fullResponse,
-                response_time: responseTime,
-                provider: result.provider,
-                model: result.model,
-                search_results: searchResults || result.search_results || null,
-              })}\n\n`,
-            );
+            if (!res.writableEnded) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: "complete",
+                  fullResponse: result.fullResponse,
+                  response_time: responseTime,
+                  provider: result.provider,
+                  model: result.model,
+                  search_results: searchResults || result.search_results || null,
+                })}\n\n`,
+              );
 
-            res.write("data: [DONE]\n\n");
-            res.end();
+              res.write("data: [DONE]\n\n");
+              res.end();
+            }
           },
           // onError callback
           async (error) => {
             console.error("AI streaming error:", error);
-            res.write(
-              `data: ${JSON.stringify({
-                type: "error",
-                message: "Failed to generate AI response",
-                error: error.message,
-              })}\n\n`,
-            );
-            res.end();
+            if (!res.writableEnded) {
+              res.write(
+                `data: ${JSON.stringify({
+                  type: "error",
+                  message: "Failed to generate AI response",
+                  error: error.message,
+                })}\n\n`,
+              );
+              res.end();
+            }
           },
           imageUrl,
         );
       } catch (aiError) {
         console.error("AI generation error:", aiError);
-        res.write(
-          `data: ${JSON.stringify({
-            type: "error",
-            message: "Failed to generate AI response",
-            error: aiError.message,
-          })}\n\n`,
-        );
-        res.end();
+        if (!res.writableEnded) {
+          res.write(
+            `data: ${JSON.stringify({
+              type: "error",
+              message: "Failed to generate AI response",
+              error: aiError.message,
+            })}\n\n`,
+          );
+          res.end();
+        }
       }
     } catch (error) {
       console.error("General AI streaming usage error:", error);
-      res.status(500).json({
-        success: false,
-        message: "Server error",
-      });
+      if (!res.headersSent) {
+        res.status(500).json({
+          success: false,
+          message: "Server error",
+          error: error.message,
+        });
+      } else if (!res.writableEnded) {
+        res.write(
+          `data: ${JSON.stringify({ type: "error", message: error.message })}\n\n`,
+        );
+        res.end();
+      }
     }
   },
 );

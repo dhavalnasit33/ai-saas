@@ -7110,12 +7110,14 @@ class AIService {
     max_tokens = 4000,
   ) {
     try {
+      // Only check the current prompt (not old history) to see if user is asking what model is being used
+    
       const isModelQuestion =
-        /\b(model|which model|what.*model|updated model)\b/i.test(prompt);
+        /\b(which model|what model|what version|which ai model|who are you|what is your model)\b/i.test(latestUserPrompt);
       const defaultSystemPrompt =
         "You are a helpful AI assistant. Don't think too long, send 1 to 2 sentence very quick responses. You can send response up to 150 words only if necessary. You can send response above 150 words only if absolutely necessary. Always try to respond within 1 to 3 seconds if possible. Never think for more than 10 seconds, always think and respond within 10 seconds or less. The faster you respond, the better.";
 
-      // Override system prompt for specific models
+  const latestUserPrompt = (prompt.split("{{historyData}}")[0] || prompt).trim();      // Override system prompt only if user specifically asks about the model
       if (
         [
           "gpt-5-mini",
@@ -7137,10 +7139,7 @@ class AIService {
         const formattedModel =
           model.model.charAt(0).toUpperCase() + model.model.slice(1);
 
-        systemPrompt = `You are a helpful AI assistant. Don't think too long, send 1 to 2 sentence very quick responses. You can send response up to 150 words only if necessary. You can send response above 150 words only if absolutely necessary. Always try to respond within 1 to 3 seconds if possible. Never think for more than 10 seconds, always think and respond within 10 seconds or less. The faster you respond, the better and if You are ChatGPT then Always identify yourself using the exact model string provided in the request payload. 
-In this case, the model is '${formattedModel}', so you must say: 
-"I am based on the '${formattedModel}' model." 
-Do not mention GPT-4. Do not hedge or disclaim.`;
+        systemPrompt = `You are a helpful AI assistant. If asked which model you are, state that you are based on the '${formattedModel}' model. Do not mention GPT-4. Do not hedge or disclaim.`;
       } else {
         systemPrompt = systemPrompt?.trim() || defaultSystemPrompt;
       }
@@ -7564,13 +7563,28 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
 
       // Add image if provided
       if (imageUrl) {
-        userMessage.content.push({
-          type: "image",
-          source: {
-            type: "url",
-            url: imageUrl,
-          },
-        });
+        if (imageUrl.startsWith("data:")) {
+          const parts = imageUrl.split(",");
+          const mimeMatch = parts[0].match(/data:(.*?);base64/);
+          const mediaType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+          const data = parts[1] || "";
+          userMessage.content.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: mediaType,
+              data: data,
+            },
+          });
+        } else {
+          userMessage.content.push({
+            type: "image",
+            source: {
+              type: "url",
+              url: imageUrl,
+            },
+          });
+        }
       }
 
       // If no image, use simple string format for backward compatibility
@@ -7642,13 +7656,28 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
 
       // Add image if provided
       if (imageUrl) {
-        userMessage.content.push({
-          type: "image",
-          source: {
-            type: "url",
-            url: imageUrl,
-          },
-        });
+        if (imageUrl.startsWith("data:")) {
+          const parts = imageUrl.split(",");
+          const mimeMatch = parts[0].match(/data:(.*?);base64/);
+          const mediaType = mimeMatch ? mimeMatch[1] : "image/jpeg";
+          const data = parts[1] || "";
+          userMessage.content.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: mediaType,
+              data: data,
+            },
+          });
+        } else {
+          userMessage.content.push({
+            type: "image",
+            source: {
+              type: "url",
+              url: imageUrl,
+            },
+          });
+        }
       }
 
       // If no image, use simple string format for backward compatibility
@@ -8640,14 +8669,28 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
     max_tokens = 4000,
   ) {
     try {
-      const messages = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: this.ensureMarkdownPrompt(prompt) },
-      ];
+      const messages = [{ role: "system", content: systemPrompt }];
+      const userMessage = { role: "user", content: [] };
 
-      if (imageUrl) {
-        messages.push({ role: "user", content: `![image](${imageUrl})` });
+      const isVisionSupported =
+        model.model &&
+        (model.model.includes("maverick") ||
+          model.model.includes("vision") ||
+          model.model.includes("multimodal") ||
+          model.model.includes("llama-4"));
+
+      if (imageUrl && isVisionSupported) {
+        userMessage.content.push({
+          type: "image_url",
+          image_url: {
+            url: imageUrl,
+          },
+        });
+      } else {
+        userMessage.content = this.ensureMarkdownPrompt(prompt);
       }
+
+      messages.push(userMessage);
 
       const response = await axios.post(
         `${provider.base_url}/v1/chat/completions`,
@@ -9121,19 +9164,10 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
 
           try {
             const data = JSON.parse(dataStr);
-
             const delta = data?.choices?.[0]?.delta;
 
-            // ✅ Extract both reasoning (thinking) and standard content
-            let chunkText = "";
-
-            if (delta?.reasoning_content || delta?.reasoning) {
-              chunkText += delta.reasoning_content || delta.reasoning;
-            }
-
-            if (delta?.content) {
-              chunkText += delta.content;
-            }
+            // ✅ Only extract real user-facing content (ignore internal thinking steps)
+            const chunkText = delta?.content || "";
 
             // ✅ Append and emit if we captured any text
             if (chunkText) {
@@ -9178,11 +9212,23 @@ Do not mention GPT-4. Do not hedge or disclaim.`;
     } catch (error) {
       if (onError) onError(error);
 
-      throw new Error(
-        `Qwen streaming error: ${
-          error.response?.data?.error?.message || error.message
-        }`,
-      );
+      let detailedMsg = error.message;
+      if (error.response?.data) {
+        try {
+          if (typeof error.response.data === "string") {
+            detailedMsg = error.response.data;
+          } else if (error.response.data.error?.message) {
+            detailedMsg = error.response.data.error.message;
+          } else if (typeof error.response.data.read === "function") {
+            const raw = error.response.data.read();
+            if (raw) detailedMsg = raw.toString();
+          }
+        } catch (e) {}
+      }
+
+      console.error("🔴 Qwen Streaming Error Details:", detailedMsg);
+
+      throw new Error(`Qwen streaming error: ${detailedMsg}`);
     }
   }
 
