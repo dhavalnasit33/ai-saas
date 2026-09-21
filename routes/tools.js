@@ -599,46 +599,62 @@ const calculateImageCreditCost = (model, plan) => {
 
   const pricingMatrix = {
     // OpenAI / ChatGPT
-    "gpt-image-1-mini": { standard: 2, pro: 2, pro_max: 2 },
-    "gpt-image-1": { standard: 8, pro: 8, pro_max: 8 },
-    "gpt-image-1.5": { standard: 8, pro: 8, pro_max: 8 },
+    "gpt-image-1-mini": { standard: 3, pro: 3, pro_max: 3 },
+    "gpt-image-1.5": { standard: 7, pro: 7, pro_max: 7 },
+    "gpt-image-2": { standard: 11, pro: 11, pro_max: 11 },
+    "gpt-image-2.5-flare": { standard: 3, pro: 3, pro_max: 3 },
+    "gpt-image-2.5-sunburst": { standard: 3, pro: 3, pro_max: 3 },
 
-    // Gemini
-    nanobanana: { standard: 2, pro: 2, pro_max: 2 },
-    "nano-pro": { standard: 8, pro: 8, pro_max: 8 },
-    "gemini-3.1-flash-image-preview": { standard: 3, pro: 3, pro_max: 3 },
+    // Google / Gemini (Nano Banana)
+    nanobanana: { standard: 8, pro: 8, pro_max: 8 },
+    "nano-pro": { standard: 27, pro: 27, pro_max: 27 },
+    "gemini-3.1-flash-image-preview": { standard: 14, pro: 14, pro_max: 14 },
+    "nano-banana-2-lite": { standard: 7, pro: 7, pro_max: 7 },
 
     // Flux
-    "flux-2-flex": { standard: 5, pro: 5, pro_max: 5 },
-    "flux-2-pro": { standard: 2, pro: 2, pro_max: 2 },
-    "flux-2-max": { standard: 5, pro: 5, pro_max: 5 },
+    "flux-2-pro": { standard: 6, pro: 6, pro_max: 6 },
+    "flux-2-flex": { standard: 12, pro: 12, pro_max: 12 },
+    "flux-2-max": { standard: 12, pro: 12, pro_max: 12 },
 
-    "krea-2": { standard: 4, pro: 4, pro_max: 4 },
+    // Krea
+    "krea-2": { standard: 2, pro: 2, pro_max: 2 },
 
-    // Stability / Stable Diffusion (Mapping core/ultra to SD 3.5)
-    core: { standard: 3, pro: 3, pro_max: 3 },
-    ultra: { standard: 3, pro: 3, pro_max: 3 },
+    // Stability / Stable Diffusion (SD 3.5 baseline)
+    core: { standard: 13, pro: 13, pro_max: 13 },
+    ultra: { standard: 13, pro: 13, pro_max: 13 },
     "stable-fast-3d": { standard: 5, pro: 5, pro_max: 5 },
     "sketch-to-image": { standard: 4, pro: 4, pro_max: 4 },
-    "kling-image-o1": { standard: 3, pro: 3, pro_max: 3 },
 
-    // SeeDream
-    seedream: { standard: 3, pro: 3, pro_max: 3 },
+    // Kling
+    "kling-image-o1": { standard: 6, pro: 6, pro_max: 6 },
+    "kling-image-v3": { standard: 6, pro: 6, pro_max: 6 },
+    "kling-image-o3": { standard: 6, pro: 6, pro_max: 6 },
+
+    // SeeDream / ByteDance
+    seedream: { standard: 8, pro: 8, pro_max: 8 },
+    "seedream-5-lite": { standard: 8, pro: 8, pro_max: 8 },
+    "seedream-5-pro": { standard: 9, pro: 9, pro_max: 9 },
 
     // Recraft
-    recraftv3: { standard: 3, pro: 3, pro_max: 3 },
-    recraftv4: { standard: 3, pro: 3, pro_max: 3 },
+    recraftv3: { standard: 8, pro: 8, pro_max: 8 },
+    recraftv4: { standard: 8, pro: 8, pro_max: 8 },
+    "recraftv4.1": { standard: 8, pro: 8, pro_max: 8 },
     recraftv4_pro: { standard: 19, pro: 19, pro_max: 19 },
 
     // Ideogram
     V_2_TURBO: { standard: 4, pro: 4, pro_max: 4 },
-    V_2: { standard: 6, pro: 6, pro_max: 6 }, // 2 Default
-    V_3: { standard: 5, pro: 5, pro_max: 5 }, // 3 Default
+    V_2: { standard: 6, pro: 6, pro_max: 6 },
+    V_3: { standard: 12, pro: 12, pro_max: 12 },
+    "ideogram-v4": { standard: 12, pro: 12, pro_max: 12 },
     V_3_TURBO: { standard: 2, pro: 2, pro_max: 2 },
-    V_3_QUALITY: { standard: 7, pro: 7, pro_max: 7 },
+    V_3_QUALITY: { standard: 12, pro: 12, pro_max: 12 },
+
+    // Qwen
+    "qwen-image-2": { standard: 8, pro: 8, pro_max: 8 },
+    "qwen-image-2-pro": { standard: 15, pro: 15, pro_max: 15 },
 
     // Fallback if model is not listed
-    default: { standard: 3, pro: 3, pro_max: 3 },
+    default: { standard: 6, pro: 6, pro_max: 6 },
   };
 
   const modelPricing = pricingMatrix[model] || pricingMatrix["default"];
@@ -771,6 +787,9 @@ router.post(
         case "gpt-image-1":
         case "gpt-image-1.5":
         case "gpt-image-1-mini":
+        case "gpt-image-2":
+        case "gpt-image-2.5-flare":
+        case "gpt-image-2.5-sunburst":
           imageData = await aiService.generateOpenAIImage(
             model,
             prompt,
@@ -781,6 +800,7 @@ router.post(
         case "nanobanana":
         case "nano-pro":
         case "gemini-3.1-flash-image-preview":
+        case "nano-banana-2-lite":
           imageData = await aiService.generateNanoBananaImage(
             model,
             prompt,
@@ -806,9 +826,11 @@ router.post(
             imageFile,
             ratio,
           );
-          contentType = "image/jpeg"; // Krea typically returns JPEGs or WebP
+          contentType = "image/jpeg";
           break;
         case "seedream":
+        case "seedream-5-lite":
+        case "seedream-5-pro":
           imageData = await aiService.generateSeedreamImage(
             model,
             prompt,
@@ -818,7 +840,20 @@ router.post(
           contentType = "image/png";
           break;
         case "kling-image-o1":
+        case "kling-image-v3":
+        case "kling-image-o3":
           imageData = await aiService.generateKlingO1Image(
+            prompt,
+            imageFile,
+            ratio,
+            model,
+          );
+          contentType = "image/png";
+          break;
+        case "qwen-image-2":
+        case "qwen-image-2-pro":
+          imageData = await aiService.generateQwenImage(
+            model,
             prompt,
             imageFile,
             ratio,
@@ -830,6 +865,7 @@ router.post(
         case "V_3":
         case "V_3_TURBO":
         case "V_3_QUALITY":
+        case "ideogram-v4":
           imageData = await aiService.generateIdeogramImage(
             model,
             prompt,
@@ -840,6 +876,7 @@ router.post(
           break;
         case "recraftv3":
         case "recraftv4":
+        case "recraftv4.1":
         case "recraftv4_pro":
           const recraftRes = await aiService.generateRecraftImage(
             model,
@@ -1157,6 +1194,9 @@ router.post(
         case "gpt-image-1":
         case "gpt-image-1-mini":
         case "gpt-image-1.5":
+        case "gpt-image-2":
+        case "gpt-image-2.5-flare":
+        case "gpt-image-2.5-sunburst":
           imageData = await aiService.generateOpenAIImage(
             model,
             prompt,
@@ -1167,6 +1207,7 @@ router.post(
         case "nanobanana":
         case "nano-pro":
         case "gemini-3.1-flash-image-preview":
+        case "nano-banana-2-lite":
           imageData = await aiService.generateNanoBananaImage(
             model,
             prompt,
@@ -1192,9 +1233,11 @@ router.post(
             imageFile,
             ratio,
           );
-          contentType = "image/jpeg"; // Krea typically returns JPEGs or WebP
+          contentType = "image/jpeg";
           break;
         case "seedream":
+        case "seedream-5-lite":
+        case "seedream-5-pro":
           imageData = await aiService.generateSeedreamImage(
             model,
             prompt,
@@ -1204,7 +1247,20 @@ router.post(
           contentType = "image/png";
           break;
         case "kling-image-o1":
+        case "kling-image-v3":
+        case "kling-image-o3":
           imageData = await aiService.generateKlingO1Image(
+            prompt,
+            imageFile,
+            ratio,
+            model,
+          );
+          contentType = "image/png";
+          break;
+        case "qwen-image-2":
+        case "qwen-image-2-pro":
+          imageData = await aiService.generateQwenImage(
+            model,
             prompt,
             imageFile,
             ratio,
@@ -1216,6 +1272,7 @@ router.post(
         case "V_3":
         case "V_3_TURBO":
         case "V_3_QUALITY":
+        case "ideogram-v4":
           imageData = await aiService.generateIdeogramImage(
             model,
             prompt,
@@ -1226,6 +1283,7 @@ router.post(
           break;
         case "recraftv3":
         case "recraftv4":
+        case "recraftv4.1":
         case "recraftv4_pro":
           const recraftRes = await aiService.generateRecraftImage(
             model,
@@ -3404,10 +3462,22 @@ Strictly follow this word count. Respond fully according to the word count.`;
             metadata,
           );
 
+          let clientErrMsg = error.message;
+          const lowerErrMsg = (error.message || "").toLowerCase();
+          if (
+            lowerErrMsg.includes("support image") ||
+            lowerErrMsg.includes("image input") ||
+            lowerErrMsg.includes("filter by image") ||
+            lowerErrMsg.includes("no endpoints found that support image") ||
+            (imageUrl && (lowerErrMsg.includes("404") || lowerErrMsg.includes("not found")))
+          ) {
+            clientErrMsg = "This model does not support image analysis. Please try a vision-supported model like ChatGPT, Gemini, Claude, or Grok.";
+          }
+
           res.write(
             `data: ${JSON.stringify({
               type: "error",
-              message: error.message,
+              message: clientErrMsg,
             })}\n\n`,
           );
           res.end();
@@ -3425,17 +3495,29 @@ Strictly follow this word count. Respond fully according to the word count.`;
       if (heartbeat) clearInterval(heartbeat);
       console.error("General AI streaming usage error:", error);
 
+      let clientErrMsg = error.message;
+      const lowerErrMsg = (error.message || "").toLowerCase();
+      if (
+        lowerErrMsg.includes("support image") ||
+        lowerErrMsg.includes("image input") ||
+        lowerErrMsg.includes("filter by image") ||
+        lowerErrMsg.includes("no endpoints found that support image") ||
+        (req.body.imageUrl && (lowerErrMsg.includes("404") || lowerErrMsg.includes("not found")))
+      ) {
+        clientErrMsg = "This model does not support image analysis. Please try a vision-supported model like ChatGPT, Gemini, Claude, or Grok.";
+      }
+
       // Only send error response if headers haven't been sent
       if (!res.headersSent) {
         res.status(500).json({
           success: false,
-          message: "Server error",
-          error: error.message,
+          message: clientErrMsg,
+          error: clientErrMsg,
         });
       } else if (!res.writableEnded) {
         // If streaming started, try to close it cleanly
         res.write(
-          `data: ${JSON.stringify({ type: "error", message: error.message })}\n\n`,
+          `data: ${JSON.stringify({ type: "error", message: clientErrMsg })}\n\n`,
         );
         res.end();
       }

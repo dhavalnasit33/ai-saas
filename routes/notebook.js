@@ -158,8 +158,35 @@ const validateNotebookSourceLimits = async (req, res, next) => {
   }
 };
 
+// Plan Validation Middleware: Restrict Notebook LLM exclusively to pro_max plan users
+const requireProMaxPlan = (req, res, next) => {
+  if (!req.user || req.user.plan !== 'pro_max') {
+    return res.status(403).json({
+      success: false,
+      requiresUpgrade: true,
+      requiredPlan: 'pro_max',
+      message: 'Notebook LLM is only available on the Premium (pro_max) plan. Please upgrade to access this feature.',
+    });
+  }
+
+  if (req.user.subscription_status === 'trialing') {
+    return res.status(403).json({
+      success: false,
+      requiresUpgrade: true,
+      requiredPlan: 'pro_max',
+      message: 'Notebook LLM is not available during the free trial. Please wait for your trial to end and your subscription to become active.',
+    });
+  }
+
+  next();
+};
+
+// Apply protect and requireProMaxPlan to all Notebook LLM endpoints
+router.use(protect);
+router.use(requireProMaxPlan);
+
 // 1. Get all notebooks for the authenticated user with optional pagination (Filter out REMOVED sources)
-router.get('/', protect, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const userId = req.user._id || req.user.id;
     const page = parseInt(req.query.page);

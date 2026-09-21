@@ -3624,11 +3624,13 @@ class AIService {
   }
 
   async generateOpenAIImage(model, prompt, imageFile = null, ratio = "1:1") {
-    // ✅ UPDATE: Allow standard, mini, and 1.5 models
+    // ✅ UPDATE: Allow standard, mini, 1.5, 2, and 2.5 models
     const supportedModels = [
-      "gpt-image-1",
       "gpt-image-1-mini",
       "gpt-image-1.5",
+      "gpt-image-2",
+      "gpt-image-2.5-flare",
+      "gpt-image-2.5-sunburst",
     ];
 
     if (!supportedModels.includes(model)) {
@@ -3711,11 +3713,12 @@ class AIService {
     }
 
     // ✅ TEXT-TO-IMAGE MODE (default when no imageFile)
-    // 1. Remove 'response_format' since the API rejected it
+    // Locked Policy: Use explicit Medium quality per OneChat AI image matrix
     const result = await openai.images.generate({
       model: model,
       prompt,
       size,
+      quality: "medium",
     });
 
     // 2. Check for URL response (Default behavior)
@@ -3739,12 +3742,17 @@ class AIService {
 
   async generateNanoBananaImage(model, prompt, imageFile, ratio = "1:1") {
     // ✅ UPDATE: Dynamically map the requested model to the correct Gemini model string
-    let geminiModel = "gemini-2.5-flash-image"; // Default fallback
+    let geminiModel = "gemini-2.5-flash-image"; // Default fallback (Nano Banana)
 
     if (model === "nano-pro") {
       geminiModel = "gemini-3-pro-image-preview";
-    } else if (model === "gemini-3.1-flash-image-preview") {
+    } else if (
+      model === "gemini-3.1-flash-image-preview" ||
+      model === "nanobanana-2"
+    ) {
       geminiModel = "gemini-3.1-flash-image-preview";
+    } else if (model === "nano-banana-2-lite") {
+      geminiModel = "gemini-2.5-flash-image";
     }
 
     const genAI = await this.getAIClient("google");
@@ -3981,8 +3989,14 @@ class AIService {
     }
 
     try {
-      const openRouterModel =
-        model === "seedream" ? "bytedance-seed/seedream-4.5" : model;
+      let openRouterModel = "bytedance-seed/seedream-4.5";
+      if (model === "seedream-5-lite" || model === "seedream-lite" || model === "seedream-4.5") {
+        openRouterModel = "bytedance-seed/seedream-4.5";
+      } else if (model === "seedream-5-pro" || model === "seedream-pro") {
+        openRouterModel = "bytedance-seed/seedream-4.5"; // OpenRouter active Seedream model is seedream-4.5
+      } else if (model && model.includes("/")) {
+        openRouterModel = model;
+      }
 
       const baseUrl = provider.base_url || "https://openrouter.ai/api/v1";
 
@@ -5823,8 +5837,18 @@ class AIService {
     let endpoint = provider.base_url || "https://api.ideogram.ai/generate";
     let payload;
 
+    // Map Ideogram model string to official API string
+    let ideogramModel = model;
+    if (model === "ideogram-v4" || model === "v4") {
+      ideogramModel = "V_3"; // or V_3_TURBO / AUTO
+    } else if (model === "v2" || model === "ideogram-v2") {
+      ideogramModel = "V_2";
+    } else if (model === "v2-turbo" || model === "ideogram-v2-turbo") {
+      ideogramModel = "V_2_TURBO";
+    }
+
     // 🔥 DYNAMIC V3 & V2 DETECTION 🔥
-    if (model.startsWith("V_3")) {
+    if (ideogramModel.startsWith("V_3")) {
       console.log("⚡ V3 Model detected. Using V3 endpoint and '16x9' format.");
 
       endpoint = "https://api.ideogram.ai/v1/ideogram-v3/generate";
@@ -5835,9 +5859,9 @@ class AIService {
         aspect_ratio: baseRatio,
       };
 
-      if (model.includes("TURBO")) {
+      if (ideogramModel.includes("TURBO")) {
         payload.rendering_speed = "TURBO";
-      } else if (model.includes("QUALITY")) {
+      } else if (ideogramModel.includes("QUALITY")) {
         payload.rendering_speed = "QUALITY";
       } else {
         payload.rendering_speed = "BALANCED";
@@ -5853,7 +5877,7 @@ class AIService {
       payload = {
         image_request: {
           prompt: prompt,
-          model: model,
+          model: ideogramModel,
           aspect_ratio: v2RatioFormat,
           magic_prompt_option: "AUTO",
         },
@@ -5952,10 +5976,16 @@ class AIService {
     }
 
     // Determine the base URL and endpoint (generations vs imageToImage)
+    // Map model ID to official Recraft API model
+    let recraftModel = model;
+    if (model === "recraftv4.1" || model === "recraftv4" || model === "recraftv4_pro") {
+      recraftModel = "recraftv3"; // Official Recraft API currently supports "recraftv3" or "recraft20b"
+    }
+
     let endpoint = baseUrl;
     const payload = {
       prompt,
-      model,
+      model: recraftModel,
     };
 
     if (imageFile) {
@@ -6473,10 +6503,10 @@ class AIService {
   }
 
   // =================================================================
-  // KLING O1 IMAGE IMPLEMENTATION (FAL.AI)
+  // KLING IMAGE IMPLEMENTATION (FAL.AI)
   // =================================================================
-  async generateKlingO1Image(prompt, imageFile, ratio = "auto") {
-    console.log(`🚀 Starting Kling O1 Image Generation...`);
+  async generateKlingO1Image(prompt, imageFile, ratio = "auto", model = "kling-image-o1") {
+    console.log(`🚀 Starting Kling Image Generation for ${model}...`);
     const axios = require("axios");
 
     // 1. Fetch Kling provider from DB
@@ -6492,9 +6522,6 @@ class AIService {
     const apiKey = provider.api_key.trim();
     let baseUrl = provider.base_url || "https://queue.fal.run";
 
-    // 🛠️ FIX: Clean the base_url to prevent 404 errors.
-    // If the database accidentally stores a path to an old model like "/fal-ai/kling-video",
-    // we must strip it so we only keep the root domain or proxy prefix.
     if (baseUrl.includes("/fal-ai/")) {
       baseUrl = baseUrl.split("/fal-ai/")[0];
     }
@@ -6502,9 +6529,18 @@ class AIService {
       baseUrl = baseUrl.slice(0, -1);
     }
 
-    // Official Fal.ai endpoint for Kling O1
-    const endpoint = `${baseUrl}/fal-ai/kling-image/o1`;
-    console.log(`📤 Sending Kling O1 request to: ${endpoint}`);
+    // Map model endpoint
+    let falPath = imageFile
+      ? "fal-ai/kling-image/v3/image-to-image"
+      : "fal-ai/kling-image/v3/text-to-image";
+
+    if (model === "kling-image-v3" || model === "kling-image-o3" || model === "kling-image-o1") {
+      falPath = imageFile
+        ? "fal-ai/kling-image/v3/image-to-image"
+        : "fal-ai/kling-image/v3/text-to-image";
+    }
+    const endpoint = `${baseUrl}/${falPath}`;
+    console.log(`📤 Sending Kling request to: ${endpoint}`);
 
     const headers = {
       Authorization: `Key ${apiKey}`,
@@ -6512,8 +6548,6 @@ class AIService {
     };
 
     let cleanPrompt = prompt || "";
-
-    // Extract resolution (1K or 2K). Default is 1K
     let resolution = "1K";
     const resMatch = cleanPrompt.match(/(?:resolution)\s*[:=]\s*(1K|2K)/i);
     if (resMatch) {
@@ -6523,7 +6557,6 @@ class AIService {
         .trim();
     }
 
-    // Validate aspect ratio for Kling O1
     let mappedRatio = "auto";
     const validRatios = [
       "auto",
@@ -6540,7 +6573,6 @@ class AIService {
       mappedRatio = ratio;
     }
 
-    // Prepare standard JSON payload
     const body = {
       prompt: cleanPrompt,
       aspect_ratio: mappedRatio,
@@ -6550,21 +6582,16 @@ class AIService {
     if (imageFile) {
       const base64Image = imageFile.buffer.toString("base64");
       const mimeType = imageFile.mimetype || "image/png";
-
-      // Kling O1 expects a list of image_urls
-      body.image_urls = [`data:${mimeType};base64,${base64Image}`];
-
-      // Auto-append the @Image1 reference if the user forgot it, as Kling relies on it for context
+      const dataUri = `data:${mimeType};base64,${base64Image}`;
+      body.image_url = dataUri;
+      body.image_urls = [dataUri];
       if (!cleanPrompt.includes("@Image")) {
         body.prompt += " applied to @Image1";
       }
-    } else {
-      throw new Error("An image file is required for Kling O1 Image editing.");
     }
 
     try {
       const createRes = await axios.post(endpoint, body, { headers });
-
       const requestId = createRes.data?.request_id;
       const statusUrl = createRes.data?.status_url;
       const responseUrl = createRes.data?.response_url;
@@ -6578,13 +6605,10 @@ class AIService {
       let isReady = false;
       let imageUrl = null;
 
-      // Poll for completion
       for (let i = 0; i < 36; i++) {
         await new Promise((resolve) => setTimeout(resolve, 5000));
-
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Kling O1 Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
@@ -6595,13 +6619,13 @@ class AIService {
 
         if (status === "ERROR" || status === "FAILED") {
           throw new Error(
-            statusRes.data?.error || "Kling O1 image generation failed",
+            statusRes.data?.error || "Kling image generation failed",
           );
         }
       }
 
       if (!isReady || !imageUrl) {
-        throw new Error("Kling O1 image generation timeout or no URL returned");
+        throw new Error("Kling image generation timeout or no URL returned");
       }
 
       const imageRes = await axios.get(imageUrl, {
@@ -6609,15 +6633,103 @@ class AIService {
       });
       return Buffer.from(imageRes.data);
     } catch (error) {
-      // Clean up the error message for better debugging
       let apiError =
         error.response?.data?.error ||
         error.response?.data?.detail ||
         error.message;
       if (typeof apiError === "object") apiError = JSON.stringify(apiError);
+      console.error("🔥 Kling Image error:", apiError);
+      throw new Error(`Kling Image error: ${apiError}`);
+    }
+  }
 
-      console.error("🔥 Kling O1 Image error:", apiError);
-      throw new Error(`Kling O1 Image error: ${apiError}`);
+  // =================================================================
+  // QWEN IMAGE IMPLEMENTATION (FAL.AI)
+  // =================================================================
+  async generateQwenImage(model, prompt, imageFile, ratio = "1:1") {
+    console.log(`🚀 Starting Qwen Image Generation for ${model}...`);
+    const axios = require("axios");
+
+    // Fetch Fal / Qwen provider
+    const provider =
+      (await AIProvider.findOne({ name: "qwen", is_active: true }).select("+api_key")) ||
+      (await AIProvider.findOne({ name: "kling", is_active: true }).select("+api_key")) ||
+      (await AIProvider.findOne({ name: "krea", is_active: true }).select("+api_key"));
+
+    if (!provider || !provider.api_key) {
+      throw new Error("fal.ai / Qwen provider not configured in DB");
+    }
+
+    const apiKey = provider.api_key.trim();
+    console.log("apiKey",apiKey)
+    let baseUrl = "https://queue.fal.run";
+
+    const falPath = model === "qwen-image-2-pro" ? "fal-ai/qwen-image/pro" : "fal-ai/qwen-image";
+    const endpoint = `${baseUrl}/${falPath}`;
+
+    const headers = {
+      Authorization: `Key ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+
+    const body = {
+      prompt: prompt,
+      image_size: ratio === "16:9" ? "landscape_16_9" : ratio === "9:16" ? "portrait_16_9" : "square_hd",
+    };
+
+    if (imageFile) {
+      const base64Image = imageFile.buffer.toString("base64");
+      const mimeType = imageFile.mimetype || "image/png";
+      body.image_url = `data:${mimeType};base64,${base64Image}`;
+    }
+
+    try {
+      const createRes = await axios.post(endpoint, body, { headers });
+      const requestId = createRes.data?.request_id;
+      const statusUrl = createRes.data?.status_url;
+      const responseUrl = createRes.data?.response_url;
+
+      if (!requestId || !statusUrl) {
+        // Synchronous fallback
+        const syncImg = createRes.data?.images?.[0]?.url;
+        if (syncImg) {
+          const res = await axios.get(syncImg, { responseType: "arraybuffer" });
+          return Buffer.from(res.data);
+        }
+        throw new Error("No request ID or image returned from Qwen API");
+      }
+
+      let isReady = false;
+      let imageUrl = null;
+
+      for (let i = 0; i < 30; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 4000));
+        const statusRes = await axios.get(statusUrl, { headers });
+        const status = statusRes.data?.status;
+
+        if (status === "COMPLETED") {
+          isReady = true;
+          const resultRes = await axios.get(responseUrl, { headers });
+          imageUrl = resultRes.data?.images?.[0]?.url;
+          break;
+        }
+
+        if (status === "ERROR" || status === "FAILED") {
+          throw new Error(statusRes.data?.error || "Qwen image generation failed");
+        }
+      }
+
+      if (!isReady || !imageUrl) {
+        throw new Error("Qwen image generation timeout");
+      }
+
+      const imageRes = await axios.get(imageUrl, { responseType: "arraybuffer" });
+      return Buffer.from(imageRes.data);
+    } catch (error) {
+      let apiError = error.response?.data?.error || error.response?.data?.detail || error.message;
+      if (typeof apiError === "object") apiError = JSON.stringify(apiError);
+      console.error("🔥 Qwen Image error:", apiError);
+      throw new Error(`Qwen Image error: ${apiError}`);
     }
   }
 
@@ -7111,13 +7223,13 @@ class AIService {
   ) {
     try {
       // Only check the current prompt (not old history) to see if user is asking what model is being used
-    
+      const latestUserPrompt = (prompt.split("{{historyData}}")[0] || prompt).trim();
       const isModelQuestion =
         /\b(which model|what model|what version|which ai model|who are you|what is your model)\b/i.test(latestUserPrompt);
       const defaultSystemPrompt =
         "You are a helpful AI assistant. Don't think too long, send 1 to 2 sentence very quick responses. You can send response up to 150 words only if necessary. You can send response above 150 words only if absolutely necessary. Always try to respond within 1 to 3 seconds if possible. Never think for more than 10 seconds, always think and respond within 10 seconds or less. The faster you respond, the better.";
 
-  const latestUserPrompt = (prompt.split("{{historyData}}")[0] || prompt).trim();      // Override system prompt only if user specifically asks about the model
+      // Override system prompt only if user specifically asks about the model
       if (
         [
           "gpt-5-mini",
@@ -8814,16 +8926,35 @@ class AIService {
   ) {
     try {
       const messages = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: this.ensureMarkdownPrompt(prompt) },
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: imageUrl
+            ? [
+                {
+                  type: "text",
+                  text: this.ensureMarkdownPrompt(prompt),
+                },
+                {
+                  type: "image_url",
+                  image_url: { url: imageUrl },
+                },
+              ]
+            : this.ensureMarkdownPrompt(prompt),
+        },
       ];
 
-      if (imageUrl) {
-        messages.push({ role: "user", content: `![image](${imageUrl})` });
-      }
+      const endpoint = provider.base_url.endsWith("/chat/completions")
+        ? provider.base_url
+        : provider.base_url.endsWith("/v1")
+        ? `${provider.base_url}/chat/completions`
+        : `${provider.base_url}/v1/chat/completions`;
 
       const response = await axios.post(
-        `${provider.base_url}/v1/chat/completions`,
+        endpoint,
         {
           model: model.model,
           messages: messages,
@@ -8835,24 +8966,28 @@ class AIService {
           headers: {
             Authorization: `Bearer ${provider.api_key}`,
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://your-app-domain.com", // Update this
-            "X-Title": "AI SaaS", // Update this
+            "HTTP-Referer": "https://your-app-domain.com",
+            "X-Title": "AI SaaS",
           },
           responseType: "stream",
+          timeout: 60000,
         },
       );
 
       let fullResponse = "";
       let totalTokens = 0;
-      let buffer = ""; // ✅ FIX: buffer prevents split-line corruption across TCP packets
+      let buffer = ""; // Prevents split-line corruption across TCP packets
 
       response.data.on("data", (chunk) => {
-        buffer += chunk.toString(); // ✅ accumulate
+        buffer += chunk.toString();
         const lines = buffer.split("\n");
-        buffer = lines.pop(); // ✅ keep incomplete last line
+        buffer = lines.pop(); // keep incomplete last line
 
         for (const line of lines) {
-          if (line.includes("[DONE]")) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          if (trimmedLine.includes("[DONE]")) {
             if (onComplete) {
               onComplete({
                 fullResponse,
@@ -8864,20 +8999,28 @@ class AIService {
             return;
           }
 
-          if (line.startsWith("data: ")) {
+          if (trimmedLine.startsWith("data:")) {
             try {
-              const dataStr = line.slice(6);
-              // Kimi sometimes sends empty strings before DONE
+              const dataStr = trimmedLine.replace(/^data:\s*/, "");
               if (!dataStr.trim()) continue;
 
               const data = JSON.parse(dataStr);
-              if (
-                data.choices &&
-                data.choices[0] &&
-                data.choices[0].delta &&
-                data.choices[0].delta.content
-              ) {
-                const content = data.choices[0].delta.content;
+              if (data.error) {
+                console.error("Kimi stream error in data payload:", data.error);
+                if (onError)
+                  onError(
+                    new Error(
+                      data.error.message || JSON.stringify(data.error),
+                    ),
+                  );
+                return;
+              }
+
+              const delta = data?.choices?.[0]?.delta;
+              // Only extract real user-facing content (ignore internal thinking/reasoning steps)
+              const content = delta?.content || "";
+
+              if (content) {
                 fullResponse += content;
 
                 if (onChunk) {
@@ -8889,11 +9032,12 @@ class AIService {
                   });
                 }
               }
+
               if (data.usage) {
                 totalTokens = data.usage.total_tokens;
               }
             } catch (parseError) {
-              console.error("Error parsing Kimi streaming data:", parseError);
+              // Ignore incomplete chunk parse errors
             }
           }
         }
@@ -8915,15 +9059,28 @@ class AIService {
         if (onError) onError(error);
       });
     } catch (error) {
+      if (onError) onError(error);
+
+      let detailedMsg = error.message;
+      if (error.response?.data) {
+        try {
+          if (typeof error.response.data === "string") {
+            detailedMsg = error.response.data;
+          } else if (error.response.data.error?.message) {
+            detailedMsg = error.response.data.error.message;
+          } else if (typeof error.response.data.read === "function") {
+            const raw = error.response.data.read();
+            if (raw) detailedMsg = raw.toString();
+          }
+        } catch (e) {}
+      }
+
       console.error(
         "Kimi (OpenRouter) streaming error:",
-        error.response?.data || error.message,
+        detailedMsg,
       );
-      if (onError) onError(error);
       throw new Error(
-        `Kimi (OpenRouter) streaming error: ${
-          error.response?.data?.error?.message || error.message
-        }`,
+        `Kimi (OpenRouter) streaming error: ${detailedMsg}`,
       );
     }
   }
@@ -9780,12 +9937,13 @@ class AIService {
         "Nemotron (OpenRouter) streaming error:",
         error.response?.data || error.message,
       );
-      if (onError) onError(error);
-      throw new Error(
-        `Nemotron streaming error: ${
-          error.response?.data?.error?.message || error.message
-        }`,
-      );
+      let errorMsg = error.response?.data?.error?.message || error.message;
+      if (imageUrl && (error.response?.status === 404 || error.response?.status === 400 || (error.message || "").includes("404") || (errorMsg || "").includes("support image"))) {
+        errorMsg = "This model does not support image analysis. Please try a vision-supported model like ChatGPT, Gemini, Claude, or Grok.";
+      }
+      const err = new Error(`Nemotron streaming error: ${errorMsg}`);
+      if (onError) onError(err);
+      throw err;
     }
   }
 
