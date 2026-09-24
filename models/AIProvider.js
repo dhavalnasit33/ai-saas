@@ -163,6 +163,7 @@ const aiProviderSchema = new mongoose.Schema(
         "pika",
         "seedance",
         "minimax_image",
+        "qwen_image",
         "wan",
         "pixverse",
         "ideogram",

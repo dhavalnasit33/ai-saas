@@ -3845,6 +3845,106 @@ class AIService {
     return Buffer.from(imagePart.inlineData.data, "base64");
   }
 
+  async generateNanoBananaEdit(prompt, imageFile, imageFile2 = null) {
+    console.log("=== Starting generateNanoBananaEdit (Native Google Gemini) ===");
+    if (!imageFile) {
+      throw new Error("An input image is required for editing.");
+    }
+
+    const genAI = await this.getAIClient("google");
+    const imageModel = genAI.getGenerativeModel({
+      model: "gemini-3.1-flash-image-preview",
+    });
+
+    const parts = [{ text: prompt.trim() }];
+
+    let mimeType = imageFile.mimetype || "image/jpeg";
+    if (
+      mimeType === "application/octet-stream" ||
+      !mimeType?.startsWith("image/")
+    ) {
+      const ext = imageFile.originalname?.split(".").pop()?.toLowerCase();
+      if (ext === "png") {
+        mimeType = "image/png";
+      } else if (ext === "webp") {
+        mimeType = "image/webp";
+      } else if (ext === "gif") {
+        mimeType = "image/gif";
+      } else {
+        mimeType = "image/jpeg";
+      }
+    }
+
+    parts.push({
+      inlineData: {
+        data: imageFile.buffer.toString("base64"),
+        mimeType: mimeType,
+      },
+    });
+
+    if (imageFile2) {
+      let mimeType2 = imageFile2.mimetype || "image/jpeg";
+      if (
+        mimeType2 === "application/octet-stream" ||
+        !mimeType2?.startsWith("image/")
+      ) {
+        const ext2 = imageFile2.originalname?.split(".").pop()?.toLowerCase();
+        if (ext2 === "png") {
+          mimeType2 = "image/png";
+        } else if (ext2 === "webp") {
+          mimeType2 = "image/webp";
+        } else if (ext2 === "gif") {
+          mimeType2 = "image/gif";
+        } else {
+          mimeType2 = "image/jpeg";
+        }
+      }
+
+      parts.push({
+        inlineData: {
+          data: imageFile2.buffer.toString("base64"),
+          mimeType: mimeType2,
+        },
+      });
+    }
+
+    const result = await imageModel.generateContent({
+      contents: [{ role: "user", parts }],
+    });
+
+    if (
+      !result.response ||
+      !result.response.candidates ||
+      result.response.candidates.length === 0
+    ) {
+      const feedback = result.response?.promptFeedback;
+      if (feedback && feedback.blockReason) {
+        throw new Error(
+          `Google AI policy blocked this edit request. Reason: ${feedback.blockReason}`,
+        );
+      }
+      throw new Error(
+        "Google AI blocked this request or returned an empty response due to safety filters.",
+      );
+    }
+
+    const firstCandidate = result.response.candidates[0];
+    if (!firstCandidate.content) {
+      throw new Error(
+        `Google AI generation stopped. Reason: ${firstCandidate.finishReason || "Safety Filter Triggered"}`,
+      );
+    }
+
+    const imagePart = firstCandidate.content?.parts?.find((p) => p.inlineData);
+    if (!imagePart) {
+      const textPart = firstCandidate.content?.parts?.find((p) => p.text);
+      const aiReply = textPart ? textPart.text : "Unknown text response";
+      throw new Error(`Google AI refused the edit request. AI said: "${aiReply}"`);
+    }
+
+    return Buffer.from(imagePart.inlineData.data, "base64");
+  }
+
   async generateFluxImage(model, prompt, imageFile, ratio = "1:1") {
     // 1. All supported Flux models
     const supportedModels = ["flux-2-pro", "flux-2-flex", "flux-2-max"];
@@ -6650,37 +6750,102 @@ class AIService {
     console.log(`🚀 Starting Qwen Image Generation for ${model}...`);
     const axios = require("axios");
 
-    // Fetch Fal / Qwen provider
+    // Fetch Fal / Qwen Image provider
     const provider =
-      (await AIProvider.findOne({ name: "qwen", is_active: true }).select("+api_key")) ||
+      (await AIProvider.findOne({ name: "qwen_image", is_active: true }).select("+api_key")) ||
       (await AIProvider.findOne({ name: "kling", is_active: true }).select("+api_key")) ||
-      (await AIProvider.findOne({ name: "krea", is_active: true }).select("+api_key"));
+      (await AIProvider.findOne({ name: "flux", is_active: true }).select("+api_key")) ||
+      (process.env.FAL_API_KEY ? { api_key: process.env.FAL_API_KEY, base_url: "https://queue.fal.run" } : null);
 
     if (!provider || !provider.api_key) {
-      throw new Error("fal.ai / Qwen provider not configured in DB");
+      throw new Error("fal.ai / Qwen Image provider (qwen_image) not configured in DB");
     }
 
     const apiKey = provider.api_key.trim();
-    console.log("apiKey",apiKey)
-    let baseUrl = "https://queue.fal.run";
+    console.log("apiKey", apiKey);
+    let baseUrl = provider.base_url || "https://queue.fal.run";
 
-    const falPath = model === "qwen-image-2-pro" ? "fal-ai/qwen-image/pro" : "fal-ai/qwen-image";
+    if (baseUrl.includes("/fal-ai/")) {
+      baseUrl = baseUrl.split("/fal-ai/")[0];
+    }
+    if (baseUrl.endsWith("/")) {
+      baseUrl = baseUrl.slice(0, -1);
+    }
+
+    let falPath;
+    if (model === "qwen-image-2-pro") {
+      falPath = imageFile
+        ? "fal-ai/qwen-image-2/pro/edit"
+        : "fal-ai/qwen-image-2/pro/text-to-image";
+    } else {
+      falPath = imageFile
+        ? "fal-ai/qwen-image-edit"
+        : "fal-ai/qwen-image";
+    }
     const endpoint = `${baseUrl}/${falPath}`;
+    console.log(`📤 Sending Qwen request to: ${endpoint}`);
 
     const headers = {
       Authorization: `Key ${apiKey}`,
       "Content-Type": "application/json",
     };
 
+    let imageSize = "square_hd";
+    if (ratio === "16:9") {
+      imageSize = "landscape_16_9";
+    } else if (ratio === "9:16") {
+      imageSize = "portrait_16_9";
+    } else if (ratio === "4:3") {
+      imageSize = "landscape_4_3";
+    } else if (ratio === "3:4") {
+      imageSize = "portrait_4_3";
+    } else if (ratio === "3:2") {
+      imageSize = { width: 1200, height: 800 };
+    } else if (ratio === "2:3") {
+      imageSize = { width: 800, height: 1200 };
+    } else {
+      imageSize = "square_hd";
+    }
+
     const body = {
       prompt: prompt,
-      image_size: ratio === "16:9" ? "landscape_16_9" : ratio === "9:16" ? "portrait_16_9" : "square_hd",
+      image_size: imageSize,
     };
 
     if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+      let uploadedUrl = null;
+      try {
+        const mimeType = imageFile.mimetype || "image/png";
+        const fileName = `image_${Date.now()}.${mimeType.includes("jpeg") || mimeType.includes("jpg") ? "jpg" : "png"}`;
+        const initRes = await axios.post(
+          "https://rest.alpha.fal.ai/storage/upload/initiate",
+          {
+            file_name: fileName,
+            content_type: mimeType,
+          },
+          {
+            headers: {
+              Authorization: `Key ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        if (initRes.data?.upload_url) {
+          await axios.put(initRes.data.upload_url, imageFile.buffer, {
+            headers: {
+              "Content-Type": mimeType,
+            },
+          });
+          uploadedUrl = initRes.data.file_url;
+        }
+      } catch (uploadErr) {
+        console.warn("⚠️ Fal storage upload failed, falling back to data URI:", uploadErr.message);
+      }
+
+      const finalImageUrl = uploadedUrl || `data:${imageFile.mimetype || "image/png"};base64,${imageFile.buffer.toString("base64")}`;
+      body.image_url = finalImageUrl;
+      body.image_urls = [finalImageUrl];
     }
 
     try {
@@ -6734,7 +6899,7 @@ class AIService {
   }
 
   async generateAiFilter(prompt, imageFile, strength) {
-    console.log("=== Starting generateAiFilter (Fal AI nano-banana-2/edit) ===");
+    console.log("=== Starting generateAiFilter (Native Google Gemini) ===");
     console.log("Prompt:", prompt);
     console.log("Strength:", strength);
 
@@ -6750,70 +6915,79 @@ class AIService {
         `Image received: ${imageFile.originalname} | Type: ${imageFile.mimetype} | Size: ${imageFile.buffer.length} bytes`,
       );
 
-      const axios = require("axios");
+      const genAI = await this.getAIClient("google");
+      const imageModel = genAI.getGenerativeModel({
+        model: "gemini-3.1-flash-image-preview",
+      });
 
       let mimeType = imageFile.mimetype || "image/jpeg";
-      if (mimeType === "application/octet-stream") {
-        const ext = imageFile.originalname
-          ? imageFile.originalname.split(".").pop().toLowerCase()
-          : "";
-        mimeType = ext === "png" ? "image/png" : "image/jpeg";
+      if (
+        mimeType === "application/octet-stream" ||
+        !mimeType?.startsWith("image/")
+      ) {
+        const ext = imageFile.originalname?.split(".").pop()?.toLowerCase();
+        if (ext === "png") {
+          mimeType = "image/png";
+        } else if (ext === "webp") {
+          mimeType = "image/webp";
+        } else if (ext === "gif") {
+          mimeType = "image/gif";
+        } else {
+          mimeType = "image/jpeg";
+        }
       }
-      const safetyImageUrl = `data:${mimeType};base64,${imageFile.buffer.toString("base64")}`;
 
-      const falApiKey = process.env.FAL_API_KEY;
-      const falUrl = process.env.FAL_NANO_BANANA_URL || "https://fal.run/fal-ai/nano-banana-2/edit";
-
-      if (!falApiKey) {
-        throw new Error("Missing Fal AI API credentials (FAL_API_KEY) in environment variables.");
-      }
-
-      const payload = {
-        prompt: prompt ? prompt.trim() : "",
-        image_urls: [safetyImageUrl],
-        safety_tolerance: "6",
-        output_format: "png",
-      };
-
-      console.log(`Sending request to Fal AI Nano Banana 2 Edit: ${falUrl}`);
-      const falResponse = await axios.post(falUrl, payload, {
-        headers: {
-          Authorization: `Key ${falApiKey}`,
-          "Content-Type": "application/json",
+      const parts = [
+        { text: prompt ? prompt.trim() : "" },
+        {
+          inlineData: {
+            data: imageFile.buffer.toString("base64"),
+            mimeType: mimeType,
+          },
         },
-        timeout: 90000,
+      ];
+
+      const result = await imageModel.generateContent({
+        contents: [{ role: "user", parts }],
       });
 
       if (
-        !falResponse.data ||
-        !falResponse.data.images ||
-        falResponse.data.images.length === 0
+        !result.response ||
+        !result.response.candidates ||
+        result.response.candidates.length === 0
       ) {
-        throw new Error("No image was generated by Fal AI.");
+        const feedback = result.response?.promptFeedback;
+        if (feedback && feedback.blockReason) {
+          throw new Error(
+            `Google AI policy blocked this filter request. Reason: ${feedback.blockReason}`,
+          );
+        }
+        throw new Error(
+          "Google AI blocked this request or returned an empty response due to strict safety filters.",
+        );
       }
 
-      const generatedImageUrl = falResponse.data.images[0].url;
+      const firstCandidate = result.response.candidates[0];
+      if (!firstCandidate.content) {
+        throw new Error(
+          `Google AI generation stopped. Reason: ${firstCandidate.finishReason || "Safety Filter Triggered"}`,
+        );
+      }
 
-      const imageDownloadResponse = await axios.get(generatedImageUrl, {
-        responseType: "arraybuffer",
-      });
+      const imagePart = firstCandidate.content?.parts?.find((p) => p.inlineData);
+      if (!imagePart) {
+        const textPart = firstCandidate.content?.parts?.find((p) => p.text);
+        const aiReply = textPart ? textPart.text : "Unknown text response";
+        throw new Error(`Google AI refused the filter. AI said: "${aiReply}"`);
+      }
 
-      console.log("✅ Success! Received response from Fal AI (nano-banana-2/edit) API.");
+      console.log("✅ Success! Received response from native Google Gemini API.");
       console.log("=== Finished generateAiFilter ===");
 
-      return Buffer.from(imageDownloadResponse.data);
+      return Buffer.from(imagePart.inlineData.data, "base64");
     } catch (error) {
       console.error("❌ === Error in generateAiFilter ===");
-      console.error("Basic Error Message:", error.message);
-      if (error.response?.data) {
-        try {
-          const errBody =
-            typeof error.response.data === "string"
-              ? error.response.data
-              : JSON.stringify(error.response.data);
-          console.error("Fal AI Error Response:", errBody);
-        } catch (e) {}
-      }
+      console.error("Error Message:", error.message);
       throw error;
     }
   }

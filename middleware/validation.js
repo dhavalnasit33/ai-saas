@@ -733,6 +733,7 @@ exports.validateAIProvider = [
       "pika",
       "seedance",
       "minimax_image",
+      "qwen_image",
       "wan",
       "pixverse",
       "ideogram",
