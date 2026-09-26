@@ -1327,169 +1327,241 @@ router.post(
 // ==========================================
 // DYNAMIC PRICING CALCULATOR
 // ==========================================
-const calculateVideoCreditCost = (model, plan, durationStr, resolution) => {
-  const duration = parseInt(durationStr?.replace("s", "") || "8");
+const calculateVideoCreditCost = (
+  model,
+  plan,
+  durationStr,
+  resolution,
+  wantsAudio = false,
+) => {
+  const duration = parseInt(durationStr?.toString().replace("s", "") || "8");
 
+  // Exact Final Credits/sec matrix from Master Video Matrix (Anchor: $0.012 = 1 Credit)
   const pricingMatrix = {
-    "sora-2": { pro: 7, pro_max: 7 },
-    "sora-2-pro": {
-      "720p": { pro: 20, pro_max: 21 },
-      "1080p": { pro: 33, pro_max: 35 },
+    // Google Veo Family
+    "veo-3.1-lite": {
+      "720p": 7,
+      "1080p": 8,
     },
-    // Veo 2.0 is 720p only
-    "veo-2.0-generate-001": { pro: 23, pro_max: 25 },
-
-    // Veo 3 Models
-    "veo-3.0-generate-001": {
-      "720p": { pro: 26, pro_max: 28 },
-      "1080p": { pro: 26, pro_max: 28 },
-    },
-    "veo-3.0-fast-generate-001": {
-      "720p": { pro: 10, pro_max: 11 },
-      "1080p": { pro: 10, pro_max: 11 },
-    },
-    "veo-3.1-generate-preview": {
-      "720p": { pro: 26, pro_max: 28 },
-      "1080p": { pro: 26, pro_max: 28 },
-      "4k": { pro: 39, pro_max: 42 },
+    "veo-3.1-fast": {
+      "720p": 9,
+      "1080p": 10,
+      "4k": 25,
     },
     "veo-3.1-fast-generate-preview": {
-      "720p": { pro: 10, pro_max: 11 },
-      "1080p": { pro: 10, pro_max: 11 },
-      "4k": { pro: 23, pro_max: 25 },
+      "720p": 9,
+      "1080p": 10,
+      "4k": 25,
     },
+    "veo-3.1": {
+      "720p": 34,
+      "1080p": 34,
+      "4k": 50,
+    },
+    "veo-3.1-generate-preview": {
+      "720p": 34,
+      "1080p": 34,
+      "4k": 50,
+    },
+    "veo-3.0-generate-001": {
+      "720p": 34,
+      "1080p": 34,
+    },
+    "veo-3.0-fast-generate-001": {
+      "720p": 9,
+      "1080p": 10,
+    },
+    "veo-2.0-generate-001": 23,
 
-    // Kling Models
-    "kling-v2-5-turbo": {
-      "720p": { pro: 5, pro_max: 5 },
-      "1080p": { pro: 5, pro_max: 5 },
+    // Runway
+    "gen4.5": 10,
+    "gen-4.5": 10,
+    "gen4_turbo": 5,
+
+    // Kling Models (Audio ON / OFF rates)
+    "kling-o3-standard": {
+      audioOff: 7,
+      audioOn: 10,
+    },
+    "kling-o3-pro": {
+      audioOff: 10,
+      audioOn: 12,
     },
     "kling-v3": {
-      "720p": { pro: 11, pro_max: 12 },
-      "1080p": { pro: 11, pro_max: 12 },
+      audioOff: 7,
+      audioOn: 10,
     },
+    "kling-3-standard": {
+      audioOff: 7,
+      audioOn: 10,
+    },
+    "kling-3-turbo": {
+      audioOff: 5,
+      audioOn: 7,
+    },
+    "kling-2.6-pro": {
+      audioOff: 6,
+      audioOn: 12,
+    },
+    "kling-v2-5-turbo": 6,
+    "kling-2.5-turbo-pro": 6,
 
-    // ✅ PIKA MODELS UPDATED FOR 720p / 1080p SUPPORT
-    "Pika v2.1": {
-      "720p": { pro: 5, pro_max: 6 },
-      "1080p": { pro: 5, pro_max: 6 }, // Adjust 1080p pricing later if desired
+    // MiniMax H3 Max
+    "minimax-h3-max": {
+      "480p": 5,
+      "768p": 7,
+      "1080p": 14,
     },
-    "Pika v2.2": {
-      "720p": { pro: 3, pro_max: 3 },
-      "1080p": { pro: 6, pro_max: 6 }, // Adjust 1080p pricing later if desired
-    },
+    "minimax-hailuo-02-standard": 7,
+    "minimax-hailuo-02-pro": 14,
+    "minimax-hailuo-2.3-standard": 7,
+    "minimax-hailuo-2.3-pro": 14,
 
-    // ✅ CHANGED: Seedance (Now dynamic based on resolution)
-    "seedance-2.0": {
-      "480p": { pro: 10, pro_max: 10 },
-      "720p": { pro: 15, pro_max: 15 },
-      "1080p": { pro: 20, pro_max: 20 },
-      "4k": { pro: 35, pro_max: 35 },
+    // Alibaba Wan 3 / 3 Prime
+    "wan-3": {
+      "480p": 5,
+      "720p": 9,
+      "1080p": 17,
     },
-    "seedance-2.0-fast": {
-      "480p": { pro: 8, pro_max: 8 },
-      "720p": { pro: 12, pro_max: 12 },
-      "1080p": { pro: 16, pro_max: 16 },
-      "4k": { pro: 25, pro_max: 25 },
+    "wan-3-prime": {
+      "480p": 6,
+      "720p": 12,
+      "1080p": 24,
     },
-
-    // MiniMax (Resolution is fixed per model: Pro = 1080p, Standard = 768p)
-    "minimax-hailuo-02-standard": { pro: 10, pro_max: 10 },
-    "minimax-hailuo-02-pro": { pro: 18, pro_max: 18 },
-    "minimax-hailuo-2.3-standard": { pro: 12, pro_max: 12 },
-    "minimax-hailuo-2.3-pro": { pro: 20, pro_max: 20 },
-
-    // Wan
     "wan-2.7": {
-      "720p": { pro: 15, pro_max: 15 },
-      "1080p": { pro: 20, pro_max: 20 },
+      "720p": 9,
+      "1080p": 17,
     },
     "wan-2.6": {
-      "720p": { pro: 12, pro_max: 12 },
-      "1080p": { pro: 16, pro_max: 16 },
+      "720p": 9,
+      "1080p": 17,
     },
     "wan-2.5-preview": {
-      "720p": { pro: 8, pro_max: 8 },
-      "1080p": { pro: 12, pro_max: 12 },
+      "720p": 9,
+      "1080p": 17,
     },
-    "bernini-r": { standard: 8, pro: 8, pro_max: 8 },
-    // PixVerse
+
+    // PixVerse V6
+    "pixverse-v6": {
+      "360p": { audioOff: 3, audioOn: 3 },
+      "540p": { audioOff: 3, audioOn: 4 },
+      "720p": { audioOff: 4, audioOn: 5 },
+      "1080p": { audioOff: 8, audioOn: 10 },
+    },
     "pixverse-c1": {
-      "360p": { pro: 3, pro_max: 3 },
-      "540p": { pro: 5, pro_max: 5 },
-      "720p": { pro: 8, pro_max: 8 },
-      "1080p": { pro: 12, pro_max: 12 },
+      "360p": 3,
+      "540p": 3,
+      "720p": 4,
+      "1080p": 8,
     },
     "pixverse-v4.5": {
-      "360p": { pro: 4, pro_max: 4 },
-      "540p": { pro: 6, pro_max: 6 },
-      "720p": { pro: 9, pro_max: 9 },
-      "1080p": { pro: 14, pro_max: 14 },
+      "360p": 3,
+      "540p": 3,
+      "720p": 4,
+      "1080p": 8,
     },
     "pixverse-v5": {
-      "360p": { pro: 5, pro_max: 5 },
-      "540p": { pro: 7, pro_max: 7 },
-      "720p": { pro: 10, pro_max: 10 },
-      "1080p": { pro: 15, pro_max: 15 },
+      "360p": 3,
+      "540p": 3,
+      "720p": 4,
+      "1080p": 8,
     },
     "pixverse-v5.5": {
-      "360p": { pro: 6, pro_max: 6 },
-      "540p": { pro: 8, pro_max: 8 },
-      "720p": { pro: 12, pro_max: 12 },
-      "1080p": { pro: 18, pro_max: 18 },
+      "360p": 3,
+      "540p": 3,
+      "720p": 4,
+      "1080p": 8,
     },
     "pixverse-v5.6": {
-      "360p": { pro: 7, pro_max: 7 },
-      "540p": { pro: 9, pro_max: 9 },
-      "720p": { pro: 13, pro_max: 13 },
-      "1080p": { pro: 19, pro_max: 19 },
-    },
-    "pixverse-v6": {
-      "360p": { pro: 8, pro_max: 8 },
-      "540p": { pro: 10, pro_max: 10 },
-      "720p": { pro: 15, pro_max: 15 },
-      "1080p": { pro: 22, pro_max: 22 },
+      "360p": 3,
+      "540p": 3,
+      "720p": 4,
+      "1080p": 8,
     },
 
-    // Runway pricing
-    "gen4.5": { pro: 8, pro_max: 8 },
+    // Pika Models
+    "Pika v2.2": {
+      "720p": 4,
+      "1080p": 8,
+    },
+    "pika-2.2": {
+      "720p": 4,
+      "1080p": 8,
+    },
+    "Pika v2.1": {
+      "720p": 4,
+      "1080p": 8,
+    },
 
-    default: { pro: 10, pro_max: 10 },
+    // Seedance Dynamic / Token Baseline
+    "seedance-2.5": {
+      "480p": 19,
+      "720p": 40,
+      "1080p": 97,
+    },
+    "seedance-2.0": {
+      "480p": 19,
+      "720p": 26,
+      "1080p": 57,
+      "4k": 97,
+    },
+    "seedance-2.0-fast": {
+      "480p": 15,
+      "720p": 21,
+      "1080p": 40,
+      "4k": 60,
+    },
+
+    // OpenAI Sora
+    "sora-2": 7,
+    "sora-2-pro": {
+      "720p": 20,
+      "1080p": 34,
+    },
+
+    "bernini-r": 8,
+    default: 9,
   };
 
   const modelPricing = pricingMatrix[model] || pricingMatrix["default"];
-  let costPerSecond;
+  let creditsPerSec = 9;
 
-  // Check if the model uses the nested resolution pricing structure
-  if (
-    modelPricing["720p"] ||
-    modelPricing["1080p"] ||
-    modelPricing["4k"] ||
-    modelPricing["480p"] ||
-    modelPricing["540p"] ||
-    modelPricing["360p"]
-  ) {
-    // Determine the correct resolution key safely
-    let resKey = "720p"; // Default
+  if (typeof modelPricing === "number") {
+    creditsPerSec = modelPricing;
+  } else if (modelPricing && typeof modelPricing === "object") {
+    // Check if it's Audio ON / OFF object
+    if ("audioOff" in modelPricing || "audioOn" in modelPricing) {
+      creditsPerSec = wantsAudio
+        ? modelPricing.audioOn || modelPricing.audioOff
+        : modelPricing.audioOff || modelPricing.audioOn;
+    } else {
+      // It's Resolution mapped
+      let resKey = "720p";
+      const resStr = resolution?.toString().toLowerCase() || "";
+      if (resStr.includes("4k")) resKey = "4k";
+      else if (resStr.includes("1080")) resKey = "1080p";
+      else if (resStr.includes("768")) resKey = "768p";
+      else if (resStr.includes("720")) resKey = "720p";
+      else if (resStr.includes("540")) resKey = "540p";
+      else if (resStr.includes("480")) resKey = "480p";
+      else if (resStr.includes("360")) resKey = "360p";
 
-    const resStr = resolution?.toLowerCase() || "";
-    if (resStr.includes("4k")) resKey = "4k";
-    else if (resStr.includes("1080")) resKey = "1080p";
-    else if (resStr.includes("720")) resKey = "720p";
-    else if (resStr.includes("540")) resKey = "540p";
-    else if (resStr.includes("480")) resKey = "480p";
-    else if (resStr.includes("360")) resKey = "360p";
+      const resVal =
+        modelPricing[resKey] !== undefined
+          ? modelPricing[resKey]
+          : modelPricing["720p"] || modelPricing["1080p"] || 9;
 
-    costPerSecond =
-      modelPricing[resKey]?.[plan] ||
-      modelPricing[resKey]?.["pro"] ||
-      modelPricing["720p"]?.["pro"];
-  } else {
-    // Standard flat-rate pricing
-    costPerSecond = modelPricing[plan] || modelPricing["pro"];
+      if (typeof resVal === "number") {
+        creditsPerSec = resVal;
+      } else if (resVal && typeof resVal === "object") {
+        creditsPerSec = wantsAudio
+          ? resVal.audioOn || resVal.audioOff
+          : resVal.audioOff || resVal.audioOn;
+      }
+    }
   }
 
-  return costPerSecond * duration;
+  return creditsPerSec * duration;
 };
 
 // ==========================================
@@ -1497,7 +1569,7 @@ const calculateVideoCreditCost = (model, plan, durationStr, resolution) => {
 // ==========================================
 router.post(
   "/generate-video",
-  upload.single("image"),
+  upload.any(),
   protect,
   aiGenerationLimiter,
   async (req, res) => {
@@ -1509,9 +1581,29 @@ router.post(
       resolution = "720p",
       audio = "no", // Extract audio parameter
       audioUrl,
+      modelType,
+      image_urls: preUploadedImageUrls,
+      image_url: preUploadedImageUrl,
+      video_url: preUploadedVideoUrl,
     } = req.body;
 
-    const imageFile = req.file;
+    const files = req.files || [];
+    let imageFile = req.file || null;
+    let videoFile = null;
+    const referenceImageFiles = [];
+
+    for (const f of files) {
+      if (f.fieldname === "image" || f.fieldname === "file") {
+        imageFile = f;
+        referenceImageFiles.push(f);
+      } else if (f.fieldname.startsWith("image")) {
+        if (!imageFile) imageFile = f;
+        referenceImageFiles.push(f);
+      } else if (f.fieldname.startsWith("video") || f.fieldname === "background") {
+        videoFile = f;
+      }
+    }
+
     const wantsAudio = audio === "yes" || audio === true;
 
     let safetyImageUrl = null;
@@ -1588,6 +1680,7 @@ router.post(
         user.plan,
         duration,
         resolution,
+        wantsAudio,
       );
 
       // 3. CHECK BALANCE (bypassed for super admin testing)
@@ -1617,6 +1710,8 @@ router.post(
           );
           break;
         case "gen4.5":
+        case "gen-4.5":
+        case "gen4_turbo":
           videoData = await aiService.generateRunwayVideo(
             model,
             prompt,
@@ -1632,6 +1727,9 @@ router.post(
         case "veo-3.0-fast-generate-001":
         case "veo-3.1-generate-preview":
         case "veo-3.1-fast-generate-preview":
+        case "veo-3.1":
+        case "veo-3.1-fast":
+        case "veo-3.1-lite":
           videoData = await aiService.generateVeoVideo(
             model,
             prompt,
@@ -1640,9 +1738,17 @@ router.post(
             aspectRatio,
             resolution,
             wantsAudio,
+            referenceImageFiles,
+            modelType,
           );
           break;
+        case "kling-o3-standard":
+        case "kling-o3-pro":
+        case "kling-3-standard":
+        case "kling-3-turbo":
+        case "kling-2.6-pro":
         case "kling-v2-5-turbo":
+        case "kling-2.5-turbo-pro":
         case "kling-v3":
           videoData = await aiService.generateKlingVideo(
             model,
@@ -1656,6 +1762,7 @@ router.post(
           break;
         case "Pika v2.1":
         case "Pika v2.2":
+        case "pika-2.2":
           // ✅ Passing wantsAudio securely
           videoData = await aiService.generatePikaVideo(
             model,
@@ -1667,6 +1774,7 @@ router.post(
             wantsAudio,
           );
           break;
+        case "seedance-2.5":
         case "seedance-2.0":
         case "seedance-2.0-fast":
           videoData = await aiService.generateSeedanceVideo(
@@ -1677,9 +1785,13 @@ router.post(
             aspectRatio,
             resolution,
             wantsAudio,
+            referenceImageFiles,
+            videoFile,
+            modelType,
           );
           break;
         // 👉 WHEN IT IS USED: If the user selects a MiniMax model
+        case "minimax-h3-max":
         case "minimax-hailuo-02-standard":
         case "minimax-hailuo-02-pro":
         case "minimax-hailuo-2.3-standard":
@@ -1693,6 +1805,8 @@ router.post(
           );
           break;
         // 👉 WHEN IT IS USED: If the user selects a Wan model
+        case "wan-3":
+        case "wan-3-prime":
         case "wan-2.7":
         case "wan-2.6":
         case "wan-2.5-preview":

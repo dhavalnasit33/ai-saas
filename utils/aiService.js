@@ -4394,16 +4394,18 @@ class AIService {
     aspectRatio,
     resolution,
     wantsAudio,
+    referenceImageFiles = [],
+    modelType = null,
   ) {
     console.log(`🚀 Starting Veo Video Generation for model: ${model}...`);
     console.log(
-      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | ⏱️ Duration: ${duration} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio}`,
+      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | 📂 Ref Images: ${referenceImageFiles.length} | ⏱️ Duration: ${duration} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio}`,
     );
 
     const axios = require("axios");
 
     try {
-      // 1. Fetch Google (Gemini) API key from your database
+      // 1. Fetch Google (Gemini) API key from database
       let provider = await AIProvider.findOne({
         name: "google",
         is_active: true,
@@ -4424,14 +4426,49 @@ class AIService {
 
       const apiKey = provider.api_key.trim();
 
-      // 2. Use the exact model ID passed from the frontend
-      const geminiModelId = model || "veo-3.1-generate-preview";
+      // 2. Use exact Google Native model IDs
+      let geminiModelId = model || "veo-3.1-fast-generate-preview";
+      if (geminiModelId === "veo-3.1-fast") {
+        geminiModelId = "veo-3.1-fast-generate-preview";
+      } else if (geminiModelId === "veo-3.1") {
+        geminiModelId = "veo-3.1-generate-preview";
+      } else if (geminiModelId === "veo-3.1-lite") {
+        geminiModelId = "veo-3.1-lite-generate-preview";
+      }
       console.log(`🧠 Using Veo model: ${geminiModelId}`);
 
       // 3. Prepare Inputs
-      const instance = { prompt };
+      const instance = { prompt: prompt.trim() };
 
-      if (imageFile) {
+      // Handle Reference-to-Video (up to 3 images)
+      const validRefImages = Array.isArray(referenceImageFiles)
+        ? referenceImageFiles.filter((f) => f && f.buffer)
+        : [];
+
+      if (modelType === "reference-to-video" || validRefImages.length > 0) {
+        const refPayloadList = validRefImages.slice(0, 3).map((f) => ({
+          image: {
+            mimeType: f.mimetype || "image/jpeg",
+            bytesBase64Encoded: f.buffer.toString("base64"),
+          },
+          referenceType: "asset",
+        }));
+
+        if (refPayloadList.length > 0) {
+          instance.referenceImages = refPayloadList;
+        } else if (imageFile && imageFile.buffer) {
+          instance.referenceImages = [
+            {
+              image: {
+                mimeType: imageFile.mimetype || "image/jpeg",
+                bytesBase64Encoded: imageFile.buffer.toString("base64"),
+              },
+              referenceType: "asset",
+            },
+          ];
+        }
+      } else if (imageFile && imageFile.buffer) {
+        // Standard Image-to-Video single start frame
         instance.image = {
           mimeType: imageFile.mimetype || "image/jpeg",
           bytesBase64Encoded: imageFile.buffer.toString("base64"),
@@ -4441,45 +4478,39 @@ class AIService {
       let finalResolution = "720p"; // Default
       let finalDurationSeconds = 4; // Default
 
-      // A. STRICT DURATION MAPPING BASED ON MODEL
+      // A. STRICT DURATION MAPPING (4s, 6s, 8s for Veo 3.1 Family)
       if (duration) {
-        const parsed = parseInt(duration.replace("s", ""));
-
+        const parsed = parseInt(duration.toString().replace("s", ""));
         if (geminiModelId === "veo-2.0-generate-001") {
-          // Veo 2.0 supports strictly 5, 6, 8
-          if ([5, 6, 8].includes(parsed)) {
-            finalDurationSeconds = parsed;
-          } else {
-            finalDurationSeconds = 5; // Safe fallback for Veo 2.0
-          }
+          finalDurationSeconds = [5, 6, 8].includes(parsed) ? parsed : 5;
         } else {
-          // Veo 3.0 / 3.1 models support strictly 4, 6, 8
-          if ([4, 6, 8].includes(parsed)) {
-            finalDurationSeconds = parsed;
-          } else {
-            finalDurationSeconds = 4; // Safe fallback for Veo 3
-          }
+          finalDurationSeconds = [4, 6, 8].includes(parsed) ? parsed : 4;
         }
       }
 
-      // B. Parse requested resolution
+      // B. Parse requested resolution (Veo 3.1 Lite has NO 4K support)
       if (resolution === "1080p" || resolution === "1080") {
         finalResolution = "1080p";
       } else if (resolution === "4k" || resolution === "4K") {
-        finalResolution = "4k";
+        finalResolution = geminiModelId.includes("lite") ? "1080p" : "4k";
       }
 
-      // C. Image-to-Video strictly requires 8 seconds according to Google Docs
-      if (imageFile) {
+      // C. Reference-to-Video and Image-to-Video duration rule (8s)
+      if (modelType === "reference-to-video" || instance.referenceImages) {
         finalDurationSeconds = 8;
+        finalResolution = "720p"; // Reference-to-video strictly 720p 8s per sheet
+      } else if (imageFile && !instance.referenceImages) {
+        if (![4, 6, 8].includes(finalDurationSeconds)) {
+          finalDurationSeconds = 8;
+        }
       }
 
-      // D. THE CRITICAL FIX: If duration is less than 8, Google FORCES resolution to be 720p.
-      if (finalDurationSeconds < 8) {
-        finalResolution = "720p";
+      // D. 1080p and 4K REQUIRE 8s as per Google Veo specs
+      if ((finalResolution === "1080p" || finalResolution === "4k") && finalDurationSeconds < 8) {
         console.log(
-          `⚠️ Duration is ${finalDurationSeconds}s. Forcing resolution to 720p to satisfy Google API rules.`,
+          `⚠️ 1080p/4K selected with ${finalDurationSeconds}s. Adjusting duration to 8s per Veo requirements.`,
         );
+        finalDurationSeconds = 8;
       }
 
       const body = {
@@ -4495,8 +4526,12 @@ class AIService {
       console.log("📤 Sending to Gemini API with parameters:", body.parameters);
 
       // 4. Send request to the standard Gemini API
+      let endpointModelId = geminiModelId;
+      if (endpointModelId === "veo-3.1-lite-generate-preview") {
+        endpointModelId = "veo-3.1-generate-preview";
+      }
       const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
-      const generateUrl = `${baseUrl}/models/${geminiModelId}:predictLongRunning`;
+      const generateUrl = `${baseUrl}/models/${endpointModelId}:predictLongRunning`;
 
       const createRes = await axios.post(generateUrl, body, {
         headers: {
@@ -4734,11 +4769,26 @@ class AIService {
       }
 
       // Strict Ratio Mapping
-      const isGen3 = actualModel.includes("gen3");
-      let mappedRatio = isGen3 ? "1280:768" : "1280:720";
-      if (aspectRatio === "9:16") {
-        mappedRatio = isGen3 ? "768:1280" : "720:1280";
-      }
+     const isGen3 = actualModel.includes("gen3");
+let mappedRatio = isGen3 ? "1280:768" : "1280:720";
+if (isGen3) {
+  if (aspectRatio === "9:16") mappedRatio = "768:1280";
+} else {
+  // Gen-4 / Gen-4.5 official ratio mapping
+  const runwayRatioMap = {
+    "16:9": "1280:720",
+    "9:16": "720:1280",
+    "1:1": "960:960",
+    "4:3": "1104:832",
+    "3:4": "832:1104",
+    "21:9": "1584:672",
+  };
+  
+  if (runwayRatioMap[aspectRatio]) {
+    mappedRatio = runwayRatioMap[aspectRatio];
+  }
+}
+
 
       // Enforce Runway prompt text length limits safely
       const safePromptText = prompt ? prompt.substring(0, 512) : "";
@@ -4765,18 +4815,12 @@ class AIService {
         payload.promptImage = `data:${mimeType};base64,${base64Image}`;
       }
 
-      console.log(
-        `📤 Sending Runway Request to ${endpoint} with payload:`,
-        JSON.stringify(payload, null, 2),
-      );
-
       const createRes = await axios.post(endpoint, payload, { headers });
       const taskId = createRes.data?.id;
       if (!taskId) {
         throw new Error("No task ID returned from Runway API");
       }
 
-      console.log(`✅ Job created. Task ID: ${taskId}`);
 
       // Poll loop for completion tracking
       let isReady = false;
@@ -5145,69 +5189,99 @@ class AIService {
   }
 
   // =================================================================
-  // SEEDANCE VIDEO IMPLEMENTATION
+  // SEEDANCE VIDEO IMPLEMENTATION (FAL.AI)
   // =================================================================
   async generateSeedanceVideo(
     model,
     prompt,
-    imageFile,
+    imageFile = null,
     durationStr,
     aspectRatio,
     resolution,
     wantsAudio,
+    referenceImageFiles = [],
+    videoFile = null,
+    modelType = null,
   ) {
     console.log(`🚀 Starting Seedance Video Generation for model: ${model}...`);
+    console.log(
+      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | 📂 Ref Images: ${referenceImageFiles.length} | 🎥 Ref Video: ${videoFile ? "Yes" : "No"} | ⏱️ Duration: ${durationStr} | 📐 Ratio: ${aspectRatio} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio} | 🏷️ ModelType: ${modelType}`,
+    );
     const axios = require("axios");
 
-    // 1. Fetch Seedance provider from DB dynamically
-    const provider = await AIProvider.findOne({
+    // 1. Fetch Seedance/fal.ai provider from DB dynamically
+    let provider = await AIProvider.findOne({
       name: "seedance",
       is_active: true,
     }).select("+api_key");
 
     if (!provider || !provider.api_key) {
       throw new Error(
-        "❌ Seedance provider not configured or API key missing in DB",
+        "❌ Seedance/Fal.ai provider not configured or API key missing in DB",
       );
     }
 
     const apiKey = provider.api_key.trim();
 
-    // 2. Determine suffix based on the model provided and input type
-    let endpointSuffix = imageFile
-      ? "/bytedance/seedance-2.0/image-to-video"
-      : "/bytedance/seedance-2.0/text-to-video";
-    if (model === "seedance-2.0-fast") {
-      endpointSuffix = imageFile
-        ? "/bytedance/seedance-2.0/fast/image-to-video"
-        : "/bytedance/seedance-2.0/fast/text-to-video";
+    // 2. Determine mode & endpoint based on model version and inputs
+    const isReferenceMode =
+      modelType === "reference-to-video" ||
+      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      videoFile !== null;
+
+    let endpoint = "https://queue.fal.run/bytedance/seedance-2.5/text-to-video";
+
+    if (model === "seedance-2.5") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.5/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.5/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.5/text-to-video";
+      }
+    } else if (model === "seedance-2.0-fast") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/fast/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/fast/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/fast/text-to-video";
+      }
+    } else {
+      // seedance-2.0 default
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/text-to-video";
+      }
     }
 
-    // 3. Clean and merge the DB base_url with the dynamic endpoint suffix
-    let baseUrl = provider.base_url || "https://queue.fal.run";
-    if (baseUrl.endsWith("/")) {
-      baseUrl = baseUrl.slice(0, -1); // Remove trailing slash if present
-    }
+    console.log(`📤 Sending request to Fal.ai Seedance Queue: ${endpoint}`);
 
-    const endpoint = `${baseUrl}${endpointSuffix}`;
-    console.log(`📤 Sending request to dynamic Seedance Queue: ${endpoint}`);
-
-    // 4. Headers (Fal Queue requires 'Key' prefix)
+    // 3. Headers (Fal Queue requires 'Key' prefix)
     const headers = {
       Authorization: `Key ${apiKey}`,
       "Content-Type": "application/json",
     };
 
-    // 5. Duration Parsing (Strictly 4 to 15 seconds)
-    let parsedDuration = 10; // Default fallback
+    // 4. Duration Parsing (Seedance 2.5 supports 4s-30s + Auto; Seedance 2.0 supports 4s-15s + Auto)
+    let parsedDuration = 5;
     if (durationStr) {
-      const val = parseInt(durationStr.replace("s", ""));
-      // Ensure it stays within Fal.ai's allowed 4-15s bounds
-      parsedDuration = val >= 4 && val <= 15 ? val : 10;
+      if (durationStr.toLowerCase() === "auto") {
+        parsedDuration = "auto";
+      } else {
+        const val = parseInt(durationStr.replace("s", ""));
+        if (!isNaN(val)) {
+          const maxDur = model === "seedance-2.5" ? 30 : 15;
+          parsedDuration = Math.min(Math.max(val, 4), maxDur);
+        }
+      }
     }
 
-    // 6. Resolution Mapping (Supports 480p, 720p, 1080p, 4k)
-    let mappedResolution = "720p"; // Default fallback
+    // 5. Resolution Mapping
+    let mappedResolution = "720p";
     if (resolution) {
       const resString = resolution.toLowerCase();
       if (resString.includes("4k")) {
@@ -5221,13 +5295,18 @@ class AIService {
       }
     }
 
+    // 6. Aspect Ratio Mapping
+    let mappedAspectRatio = aspectRatio || "16:9";
+    if (mappedAspectRatio === "auto" || !mappedAspectRatio) {
+      mappedAspectRatio = "16:9";
+    }
+
     // 7. Prepare Payload
     const body = {
       prompt: prompt,
-      aspect_ratio: aspectRatio || "16:9",
+      aspect_ratio: mappedAspectRatio,
       duration: parsedDuration,
       resolution: mappedResolution,
-      // Convert wantsAudio to boolean just in case it's passed as a string
       generate_audio:
         wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true",
     };
@@ -5236,6 +5315,52 @@ class AIService {
       const base64Image = imageFile.buffer.toString("base64");
       const mimeType = imageFile.mimetype || "image/png";
       body.image_url = `data:${mimeType};base64,${base64Image}`;
+    }
+
+    if (isReferenceMode) {
+      const validRefImages = Array.isArray(referenceImageFiles)
+        ? referenceImageFiles.filter((f) => f && f.buffer)
+        : [];
+
+      const imageB64List = [];
+      if (validRefImages.length > 0) {
+        validRefImages.forEach((f) => {
+          const b64 = f.buffer.toString("base64");
+          const mType = f.mimetype || "image/png";
+          imageB64List.push(`data:${mType};base64,${b64}`);
+        });
+      } else if (imageFile && imageFile.buffer) {
+        const b64 = imageFile.buffer.toString("base64");
+        const mType = imageFile.mimetype || "image/png";
+        imageB64List.push(`data:${mType};base64,${b64}`);
+      }
+
+      if (imageB64List.length > 0) {
+        body.image_urls = imageB64List;
+        body.images = imageB64List;
+        body.reference_images = imageB64List;
+        if (!body.image_url) {
+          body.image_url = imageB64List[0];
+        }
+      }
+
+      if (videoFile && videoFile.buffer) {
+        const b64Vid = videoFile.buffer.toString("base64");
+        const mTypeVid = videoFile.mimetype || "video/mp4";
+        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
+        body.video_urls = [vidUrl];
+        body.videos = [vidUrl];
+        body.reference_video = vidUrl;
+        body.video_url = vidUrl;
+      }
+
+      // Ensure prompt mentions [Image1] if user didn't specify placeholders
+      if (body.image_urls && body.image_urls.length > 0 && !body.prompt.includes("[Image")) {
+        const imagePlaceholders = body.image_urls
+          .map((_, idx) => `[Image${idx + 1}]`)
+          .join(" ");
+        body.prompt = `${body.prompt} based on ${imagePlaceholders}`;
+      }
     }
 
     try {
@@ -5257,14 +5382,14 @@ class AIService {
       let isReady = false;
       let videoUrl = null;
 
-      // Step 2: Poll for completion
-      for (let i = 0; i < 60; i++) {
+      // Step 2: Poll for completion (up to 10 minutes)
+      for (let i = 0; i < 120; i++) {
         console.log(`⏳ Polling attempt ${i + 1} for Seedance task...`);
         await new Promise((resolve) => setTimeout(resolve, 5000)); // Poll every 5 seconds
 
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Status: ${status}`);
+        console.log(`📌 Seedance Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
