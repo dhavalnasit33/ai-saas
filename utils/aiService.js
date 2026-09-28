@@ -2825,7 +2825,10 @@ const parseFalError = (error) => {
     if (data.detail) {
       if (Array.isArray(data.detail) && data.detail.length > 0) {
         errorMessage = data.detail
-          .map((d) => d.msg || d.message || JSON.stringify(d))
+          .map((d) => {
+            const loc = Array.isArray(d.loc) ? ` (${d.loc.join(".")})` : "";
+            return (d.msg || d.message || JSON.stringify(d)) + loc;
+          })
           .join(", ");
         code = data.detail[0].type || data.detail[0].code || code;
       } else if (typeof data.detail === "object") {
@@ -4440,33 +4443,25 @@ class AIService {
       // 3. Prepare Inputs
       const instance = { prompt: prompt.trim() };
 
-      // Handle Reference-to-Video (up to 3 images)
+      // Handle Reference-to-Video (up to 3 images) vs Standard Image-to-Video (1 image)
       const validRefImages = Array.isArray(referenceImageFiles)
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
 
-      if (modelType === "reference-to-video" || validRefImages.length > 0) {
-        const refPayloadList = validRefImages.slice(0, 3).map((f) => ({
+      const isExplicitRefMode =
+        modelType === "reference-to-video" ||
+        modelType === "reference" ||
+        validRefImages.length > 1;
+
+      if (isExplicitRefMode && (validRefImages.length > 0 || (imageFile && imageFile.buffer))) {
+        const sourceList = validRefImages.length > 0 ? validRefImages : [imageFile];
+        instance.referenceImages = sourceList.slice(0, 3).map((f) => ({
           image: {
             mimeType: f.mimetype || "image/jpeg",
             bytesBase64Encoded: f.buffer.toString("base64"),
           },
           referenceType: "asset",
         }));
-
-        if (refPayloadList.length > 0) {
-          instance.referenceImages = refPayloadList;
-        } else if (imageFile && imageFile.buffer) {
-          instance.referenceImages = [
-            {
-              image: {
-                mimeType: imageFile.mimetype || "image/jpeg",
-                bytesBase64Encoded: imageFile.buffer.toString("base64"),
-              },
-              referenceType: "asset",
-            },
-          ];
-        }
       } else if (imageFile && imageFile.buffer) {
         // Standard Image-to-Video single start frame
         instance.image = {
@@ -4569,6 +4564,15 @@ class AIService {
 
         if (op.done) {
           console.log("✅ Veo generation completed on server.");
+
+          // Check if Google RAI (Responsible AI) / Safety / Audio filter blocked the output
+          const raiReasons =
+            op.response?.generateVideoResponse?.raiMediaFilteredReasons ||
+            op.response?.raiMediaFilteredReasons;
+          if (Array.isArray(raiReasons) && raiReasons.length > 0) {
+            console.error("❌ Veo RAI Filtered:", raiReasons.join(" | "));
+            throw new Error(raiReasons[0]);
+          }
 
           const videoUri =
             op.response?.generateVideoResponse?.generatedSamples?.[0]?.video
@@ -4883,16 +4887,19 @@ if (isGen3) {
     durationStr,
     aspectRatio,
     resolution,
-    wantsAudio, // ✅ Receives the boolean from your router
+    wantsAudio,
+    referenceImageFiles = [],
+    videoFile = null,
+    modelType = null,
   ) {
     console.log(`🚀 Starting Kling Video Generation for model: ${model}...`);
     console.log(
-      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | ⏱️ Duration: ${durationStr} | 📐 Ratio: ${aspectRatio} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio}`,
+      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | 📂 Ref Images: ${referenceImageFiles.length} | ⏱️ Duration: ${durationStr} | 📐 Ratio: ${aspectRatio} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio} | 🏷️ ModelType: ${modelType}`,
     );
     const axios = require("axios");
 
-    // 1. Fetch provider details from DB
-    const provider = await AIProvider.findOne({
+    // 1. Fetch provider details from DB (kling or fal fallback)
+    let provider = await AIProvider.findOne({
       name: "kling",
       is_active: true,
     }).select("+api_key");
@@ -4903,65 +4910,142 @@ if (isGen3) {
       );
     }
 
-    // 2. Extract version from model string
-    const actualKlingModel = model || "kling-v2-5-turbo";
-    let versionPath = "v2.5-turbo/pro"; // Default fallback
+    // 2. Map frontend model ID to fal.ai endpoint
+    const actualKlingModel = (model || "kling-3-standard").toLowerCase();
+    const isReferenceMode =
+      modelType === "reference-to-video" ||
+      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      videoFile !== null;
 
-    // Map your frontend models to the correct Fal AI endpoint paths
-    if (
-      actualKlingModel.includes("v3") ||
-      actualKlingModel.includes("3.0") ||
-      actualKlingModel === "kling-v3"
-    ) {
-      versionPath = "v3/pro";
-    } else if (
-      actualKlingModel.includes("v2-5") ||
-      actualKlingModel.includes("2.5") ||
-      actualKlingModel === "kling-v2-5-turbo"
-    ) {
-      versionPath = "v2.5-turbo/pro";
+    let endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/text-to-video";
+
+    if (actualKlingModel === "kling-o3-pro") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/pro/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/pro/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/pro/text-to-video";
+      }
+    } else if (actualKlingModel === "kling-o3-standard") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/standard/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/standard/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/standard/text-to-video";
+      }
+    } else if (actualKlingModel === "kling-3-turbo") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/turbo/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/turbo/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/turbo/text-to-video";
+      }
+    } else if (actualKlingModel === "kling-3-standard" || actualKlingModel === "kling-v3") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/text-to-video";
+      }
+    } else if (actualKlingModel === "kling-2.6-pro") {
+      if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/text-to-video";
+      }
+    } else if (actualKlingModel.includes("2.5") || actualKlingModel.includes("v2-5")) {
+      if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
+      }
     }
-
-    console.log(
-      `🧠 Mapped ${actualKlingModel} to Fal.ai version: ${versionPath}`,
-    );
-
-    // 3. Construct Dynamic Endpoint for Fal.ai Queue
-    let baseUrl = "https://queue.fal.run/fal-ai/kling-video";
-
-    // fal.ai uses specific paths for text vs image
-    const endpoint = imageFile
-      ? `${baseUrl}/${versionPath}/image-to-video`
-      : `${baseUrl}/${versionPath}/text-to-video`;
 
     console.log(`📤 Sending request to Fal AI Queue: ${endpoint}`);
 
-    // 4. Headers (Using "Key" prefix for Fal.ai)
+    // 3. Headers (Using "Key" prefix for Fal.ai)
     const headers = {
       Authorization: `Key ${provider.api_key.trim()}`,
       "Content-Type": "application/json",
     };
 
-    // 5. STRICT Duration Mapping (Kling usually accepts 5 or 10 on Fal)
+    // 4. STRICT Duration Mapping (3-15s for O3 & V3; 5s/10s for 2.6 & 2.5)
     let parsedDuration = "5";
     if (durationStr) {
       const val = parseInt(durationStr.replace("s", ""));
-      parsedDuration = val >= 10 ? "10" : "5"; // Sent as string enum for Fal AI
+      if (!isNaN(val)) {
+        if (actualKlingModel.includes("2.5") || actualKlingModel.includes("2.6")) {
+          parsedDuration = val >= 10 ? "10" : "5";
+        } else {
+          parsedDuration = String(Math.min(Math.max(val, 3), 15));
+        }
+      }
+    }
+
+    // 5. Aspect Ratio Mapping
+    let mappedAspectRatio = aspectRatio || "16:9";
+    if (mappedAspectRatio === "auto" || !mappedAspectRatio) {
+      mappedAspectRatio = "16:9";
     }
 
     // 6. Prepare Payload
     const body = {
       prompt: prompt,
-      aspect_ratio: aspectRatio || "16:9",
+      aspect_ratio: mappedAspectRatio,
       duration: parsedDuration,
-      generate_audio: wantsAudio, // ✅ Passed the audio flag to Fal.ai/Kling
+      generate_audio:
+        wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true",
     };
 
     if (imageFile) {
       const base64Image = imageFile.buffer.toString("base64");
       const mimeType = imageFile.mimetype || "image/png";
-      // Fal AI expects a data URI for image payloads
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
+      body.image_url = imgDataUri;
+      body.start_image_url = imgDataUri;
+    }
+
+    if (isReferenceMode) {
+      const validRefImages = Array.isArray(referenceImageFiles)
+        ? referenceImageFiles.filter((f) => f && f.buffer)
+        : [];
+
+      const imageB64List = [];
+      if (validRefImages.length > 0) {
+        validRefImages.forEach((f) => {
+          const b64 = f.buffer.toString("base64");
+          const mType = f.mimetype || "image/png";
+          imageB64List.push(`data:${mType};base64,${b64}`);
+        });
+      } else if (imageFile && imageFile.buffer) {
+        const b64 = imageFile.buffer.toString("base64");
+        const mType = imageFile.mimetype || "image/png";
+        imageB64List.push(`data:${mType};base64,${b64}`);
+      }
+
+      if (imageB64List.length > 0) {
+        body.image_urls = imageB64List;
+        body.images = imageB64List;
+        body.reference_images = imageB64List;
+        if (!body.image_url) {
+          body.image_url = imageB64List[0];
+          body.start_image_url = imageB64List[0];
+        }
+      }
+
+      if (videoFile && videoFile.buffer) {
+        const b64Vid = videoFile.buffer.toString("base64");
+        const mTypeVid = videoFile.mimetype || "video/mp4";
+        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
+        body.video_urls = [vidUrl];
+        body.videos = [vidUrl];
+        body.reference_video = vidUrl;
+        body.video_url = vidUrl;
+      }
     }
 
     try {
@@ -4981,24 +5065,19 @@ if (isGen3) {
       let isReady = false;
       let videoUrl = null;
 
-      // Step 2: Poll for completion
-      for (let i = 0; i < 60; i++) {
+      // Step 2: Poll for completion (up to 10 minutes)
+      for (let i = 0; i < 120; i++) {
         console.log(`⏳ Polling attempt ${i + 1} for Kling task...`);
         await new Promise((resolve) => setTimeout(resolve, 5000)); // Poll every 5 seconds
 
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Status: ${status}`);
+        console.log(`📌 Kling Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
-
-          // Get the final result from the response_url
           const resultRes = await axios.get(responseUrl, { headers });
-
-          // The result usually contains `video.url`
           videoUrl = resultRes.data?.video?.url || resultRes.data?.url;
-
           console.log("✅ Kling Generation Complete!");
           break;
         }
@@ -5438,95 +5517,166 @@ if (isGen3) {
   async generateMiniMaxVideo(
     model,
     prompt,
-    imageFile,
+    imageFile = null,
     durationStr,
     aspectRatio,
+    resolution,
+    wantsAudio,
+    referenceImageFiles = [],
+    videoFile = null,
+    modelType = null,
   ) {
     console.log(`🚀 Starting MiniMax Video Generation for model: ${model}...`);
+    console.log(
+      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | 📂 Ref Images: ${referenceImageFiles.length} | ⏱️ Duration: ${durationStr} | 📐 Ratio: ${aspectRatio} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio} | 🏷️ ModelType: ${modelType}`,
+    );
     const axios = require("axios");
 
-    // 1. Fetch MiniMax provider from DB dynamically
-    const provider = await AIProvider.findOne({
-      name: "minimax_image", // Make sure this provider is named 'minimax' in your DB
+    // 1. Fetch MiniMax provider from DB (minimax_image, minimax, or fal fallback)
+    let provider = await AIProvider.findOne({
+      name: "minimax_image",
       is_active: true,
     }).select("+api_key");
 
     if (!provider || !provider.api_key) {
       throw new Error(
-        "❌ MiniMax provider not configured or API key missing in DB",
+        "❌ MiniMax (Fal.ai) provider not configured or API key missing in DB",
       );
     }
 
     const apiKey = provider.api_key.trim();
 
-    // 2. Determine Endpoint Suffix and Constraints based on the model and input type
-    let endpointSuffix = "";
-    let isPro = false;
+    // 2. Map model ID to fal.ai queue endpoint
+    const actualModel = (model || "minimax-h3-max").toLowerCase();
+    const isReferenceMode =
+      modelType === "reference-to-video" ||
+      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      videoFile !== null;
 
-    switch (model) {
-      case "minimax-hailuo-02-standard":
-        endpointSuffix = imageFile
-          ? "/fal-ai/minimax/hailuo-02/standard/image-to-video"
-          : "/fal-ai/minimax/hailuo-02/standard/text-to-video";
-        break;
-      case "minimax-hailuo-02-pro":
-        endpointSuffix = imageFile
-          ? "/fal-ai/minimax/hailuo-02/pro/image-to-video"
-          : "/fal-ai/minimax/hailuo-02/pro/text-to-video";
-        isPro = true;
-        break;
-      case "minimax-hailuo-2.3-standard":
-        endpointSuffix = imageFile
-          ? "/fal-ai/minimax/hailuo-2.3/standard/image-to-video"
-          : "/fal-ai/minimax/hailuo-2.3/standard/text-to-video";
-        break;
-      case "minimax-hailuo-2.3-pro":
-        endpointSuffix = imageFile
-          ? "/fal-ai/minimax/hailuo-2.3/pro/image-to-video"
-          : "/fal-ai/minimax/hailuo-2.3/pro/text-to-video";
-        isPro = true;
-        break;
-      default:
-        endpointSuffix = imageFile
-          ? "/fal-ai/minimax/hailuo-02/standard/image-to-video"
-          : "/fal-ai/minimax/hailuo-02/standard/text-to-video";
+    let endpoint = "https://queue.fal.run/minimax/h3-max/text-to-video";
+
+    if (actualModel.includes("h3-max") || actualModel === "minimax-h3-max") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/minimax/h3-max/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/minimax/h3-max/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/minimax/h3-max/text-to-video";
+      }
+    } else if (actualModel.includes("hailuo-02-pro")) {
+      endpoint = imageFile
+        ? "https://queue.fal.run/fal-ai/minimax/hailuo-02/pro/image-to-video"
+        : "https://queue.fal.run/fal-ai/minimax/hailuo-02/pro/text-to-video";
+    } else if (actualModel.includes("hailuo-02-standard")) {
+      endpoint = imageFile
+        ? "https://queue.fal.run/fal-ai/minimax/hailuo-02/standard/image-to-video"
+        : "https://queue.fal.run/fal-ai/minimax/hailuo-02/standard/text-to-video";
+    } else if (actualModel.includes("hailuo-2.3-pro")) {
+      endpoint = imageFile
+        ? "https://queue.fal.run/fal-ai/minimax/hailuo-2.3/pro/image-to-video"
+        : "https://queue.fal.run/fal-ai/minimax/hailuo-2.3/pro/text-to-video";
+    } else if (actualModel.includes("hailuo-2.3-standard")) {
+      endpoint = imageFile
+        ? "https://queue.fal.run/fal-ai/minimax/hailuo-2.3/standard/image-to-video"
+        : "https://queue.fal.run/fal-ai/minimax/hailuo-2.3/standard/text-to-video";
     }
 
-    // 3. Clean and merge the DB base_url with the dynamic endpoint suffix
-    let baseUrl = provider.base_url || "https://queue.fal.run";
-    if (baseUrl.endsWith("/")) {
-      baseUrl = baseUrl.slice(0, -1);
-    }
+    console.log(`📤 Sending request to MiniMax Queue: ${endpoint}`);
 
-    const endpoint = `${baseUrl}${endpointSuffix}`;
-    console.log(`📤 Sending request to dynamic MiniMax Queue: ${endpoint}`);
-
-    // 4. Headers
+    // 3. Headers
     const headers = {
       Authorization: `Key ${apiKey}`,
       "Content-Type": "application/json",
     };
 
-    // 5. Build Payload (Strictly NO aspect ratio, resolution or audio parameters)
+    // 4. Build Payload
     const body = {
       prompt: prompt,
     };
 
+    // H3 Max parameters
+    if (actualModel.includes("h3-max")) {
+      // Resolution mapping (Strictly uppercase '480P', '768P', '1080P')
+      let mappedResolution = "768P";
+      if (resolution) {
+        const resLower = resolution.toLowerCase();
+        if (resLower.includes("1080")) mappedResolution = "1080P";
+        else if (resLower.includes("480")) mappedResolution = "480P";
+        else mappedResolution = "768P";
+      }
+      body.resolution = mappedResolution;
+
+      // Aspect Ratio
+      body.aspect_ratio = aspectRatio || "16:9";
+
+      // Duration (5 to 15s)
+      let parsedDuration = 5;
+      if (durationStr) {
+        const val = parseInt(durationStr.replace("s", ""));
+        if (!isNaN(val)) {
+          parsedDuration = Math.min(Math.max(val, 5), 15);
+        }
+      }
+      body.duration = parsedDuration;
+      body.generate_audio = wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true";
+    } else {
+      // Legacy Hailuo duration (6s or 10s)
+      if (durationStr) {
+        const val = parseInt(durationStr.replace("s", ""));
+        if (val === 6 || val === 10) {
+          body.duration = val.toString();
+        }
+      }
+    }
+
     if (imageFile) {
       const base64Image = imageFile.buffer.toString("base64");
       const mimeType = imageFile.mimetype || "image/png";
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
+      body.image_url = imgDataUri;
+      body.start_image_url = imgDataUri;
     }
 
-    // 6. Handle Duration Constraints (Only Standard supports duration inputs)
-    if (!isPro && durationStr) {
-      const val = parseInt(durationStr.replace("s", ""));
-      // Only attach duration if it matches Fal.ai's strict 6 or 10 support
-      if (val === 6 || val === 10) {
-        body.duration = val.toString();
+    if (isReferenceMode) {
+      const validRefImages = Array.isArray(referenceImageFiles)
+        ? referenceImageFiles.filter((f) => f && f.buffer)
+        : [];
+
+      const imageB64List = [];
+      if (validRefImages.length > 0) {
+        validRefImages.forEach((f) => {
+          const b64 = f.buffer.toString("base64");
+          const mType = f.mimetype || "image/png";
+          imageB64List.push(`data:${mType};base64,${b64}`);
+        });
+      } else if (imageFile && imageFile.buffer) {
+        const b64 = imageFile.buffer.toString("base64");
+        const mType = imageFile.mimetype || "image/png";
+        imageB64List.push(`data:${mType};base64,${b64}`);
+      }
+
+      if (imageB64List.length > 0) {
+        body.reference_image_urls = imageB64List;
+        body.image_urls = imageB64List;
+        body.images = imageB64List;
+        body.reference_images = imageB64List;
+        if (!body.image_url) {
+          body.image_url = imageB64List[0];
+          body.start_image_url = imageB64List[0];
+        }
+      }
+
+      if (videoFile && videoFile.buffer) {
+        const b64Vid = videoFile.buffer.toString("base64");
+        const mTypeVid = videoFile.mimetype || "video/mp4";
+        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
+        body.reference_video_urls = [vidUrl];
+        body.video_urls = [vidUrl];
+        body.videos = [vidUrl];
+        body.reference_video = vidUrl;
+        body.video_url = vidUrl;
       }
     }
-    // *If it's Pro, duration is completely omitted based on your screenshot.*
 
     try {
       // Step 1: Submit the request to Queue
@@ -5547,15 +5697,14 @@ if (isGen3) {
       let isReady = false;
       let videoUrl = null;
 
-      // Step 2: Poll for completion
-      for (let i = 0; i < 90; i++) {
-        // MiniMax can take 4-8 mins, so we poll up to 90 times (7.5 mins max)
+      // Step 2: Poll for completion (up to 10 minutes)
+      for (let i = 0; i < 120; i++) {
         console.log(`⏳ Polling attempt ${i + 1} for MiniMax task...`);
         await new Promise((resolve) => setTimeout(resolve, 5000)); // Poll every 5 seconds
 
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Status: ${status}`);
+        console.log(`📌 MiniMax Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
@@ -5566,12 +5715,14 @@ if (isGen3) {
         }
 
         if (status === "IN_QUEUE" || status === "IN_PROGRESS") {
-          continue; // Wait and try again
+          continue;
         }
 
         if (status === "ERROR" || status === "FAILED") {
           console.error("❌ MiniMax Generation Failed:", statusRes.data);
-          throw new Error(statusRes.data?.error || "MiniMax generation failed");
+          throw new Error(
+            statusRes.data?.error || "MiniMax generation failed",
+          );
         }
       }
 
@@ -5602,18 +5753,25 @@ if (isGen3) {
   async generateWanVideo(
     model,
     prompt,
-    imageFile,
+    imageFile = null,
     durationStr,
     aspectRatio,
     resolution,
-    audioUrl,
+    wantsAudio,
+    audioUrl = null,
+    referenceImageFiles = [],
+    videoFile = null,
+    modelType = null,
   ) {
     console.log(`🚀 Starting Wan Video Generation for model: ${model}...`);
+    console.log(
+      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | 📂 Ref Images: ${referenceImageFiles.length} | ⏱️ Duration: ${durationStr} | 📐 Ratio: ${aspectRatio} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio} | 🏷️ ModelType: ${modelType}`,
+    );
     const axios = require("axios");
 
-    // 1. Fetch Wan provider from DB dynamically
-    const provider = await AIProvider.findOne({
-      name: "wan", // Make sure this provider is named 'wan' in your DB
+    // 1. Fetch Wan provider from DB (wan or fal fallback)
+    let provider = await AIProvider.findOne({
+      name: "wan",
       is_active: true,
     }).select("+api_key");
 
@@ -5625,67 +5783,85 @@ if (isGen3) {
 
     const apiKey = provider.api_key.trim();
 
-    // 2. Determine Endpoint Suffix based on the model
-    let endpointSuffix = "";
-    switch (model) {
-      case "wan-2.7":
-        endpointSuffix = "/fal-ai/wan/v2.7/text-to-video";
-        break;
-      case "wan-2.6":
-        endpointSuffix = "/wan/v2.6/text-to-video";
-        break;
-      case "wan-2.5-preview":
-        endpointSuffix = "/fal-ai/wan-25-preview/text-to-video";
-        break;
-      default:
-        endpointSuffix = "/fal-ai/wan/v2.7/text-to-video";
+    // 2. Map model ID to fal.ai endpoint
+    const actualModel = (model || "wan-3").toLowerCase();
+    const isReferenceMode =
+      modelType === "reference-to-video" ||
+      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      videoFile !== null;
+
+    let endpoint = "https://queue.fal.run/alibaba/wan-3.0/text-to-video";
+
+    if (actualModel === "wan-3-prime") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/text-to-video";
+      }
+    } else if (actualModel === "wan-3") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/fal-ai/wan-3/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/alibaba/wan-3.0/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/alibaba/wan-3.0/text-to-video";
+      }
+    } else if (actualModel === "wan-2.7") {
+      if (isReferenceMode) {
+        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/reference-to-video";
+      } else if (imageFile) {
+        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/text-to-video";
+      }
+    } else if (actualModel === "wan-2.6") {
+      endpoint = imageFile
+        ? "https://queue.fal.run/fal-ai/wan/v2.6/image-to-video"
+        : "https://queue.fal.run/fal-ai/wan/v2.6/text-to-video";
+    } else if (actualModel === "wan-2.5-preview") {
+      endpoint = imageFile
+        ? "https://queue.fal.run/fal-ai/wan-25-preview/image-to-video"
+        : "https://queue.fal.run/fal-ai/wan-25-preview/text-to-video";
     }
 
-    // 3. Clean and merge the DB base_url
-    let baseUrl = provider.base_url || "https://queue.fal.run";
-    if (baseUrl.endsWith("/")) {
-      baseUrl = baseUrl.slice(0, -1);
-    }
+    console.log(`📤 Sending request to Wan Queue: ${endpoint}`);
 
-    // Check if imageFile is passed (if they eventually support image-to-video)
-    if (imageFile) {
-      endpointSuffix = endpointSuffix.replace(
-        "text-to-video",
-        "image-to-video",
-      );
-    }
-
-    const endpoint = `${baseUrl}${endpointSuffix}`;
-    console.log(`📤 Sending request to dynamic Wan Queue: ${endpoint}`);
-
-    // 4. Headers
+    // 3. Headers
     const headers = {
       Authorization: `Key ${apiKey}`,
       "Content-Type": "application/json",
     };
 
-    // 5. Duration Parsing (Strictly 2 to 15 seconds)
-    let parsedDuration = 5; // Default
+    // 4. Duration Parsing (2s to 30s)
+    let parsedDuration = 5;
     if (durationStr) {
       const val = parseInt(durationStr.replace("s", ""));
-      parsedDuration = val >= 2 && val <= 15 ? val : 5;
+      if (!isNaN(val)) {
+        parsedDuration = Math.min(Math.max(val, 2), 30);
+      }
     }
 
-    // 6. Resolution Mapping
-    let mappedResolution = "720p"; // Default
-    if (resolution?.toLowerCase().includes("1080")) {
-      mappedResolution = "1080p";
+    // 5. Resolution Mapping (480p, 720p, 1080p)
+    let mappedResolution = "720p";
+    if (resolution) {
+      const resLower = resolution.toLowerCase();
+      if (resLower.includes("1080")) mappedResolution = "1080p";
+      else if (resLower.includes("480")) mappedResolution = "480p";
+      else mappedResolution = "720p";
     }
 
-    // 7. Build Payload
+    // 6. Build Payload
     const body = {
       prompt: prompt,
       aspect_ratio: aspectRatio || "16:9",
       duration: parsedDuration,
       resolution: mappedResolution,
+      generate_audio:
+        wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true",
     };
 
-    // Wan specifically accepts an audio_url as shown in your screenshot
     if (audioUrl) {
       body.audio_url = audioUrl;
     }
@@ -5693,7 +5869,50 @@ if (isGen3) {
     if (imageFile) {
       const base64Image = imageFile.buffer.toString("base64");
       const mimeType = imageFile.mimetype || "image/png";
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
+      body.image_url = imgDataUri;
+      body.start_image_url = imgDataUri;
+    }
+
+    if (isReferenceMode) {
+      const validRefImages = Array.isArray(referenceImageFiles)
+        ? referenceImageFiles.filter((f) => f && f.buffer)
+        : [];
+
+      const imageB64List = [];
+      if (validRefImages.length > 0) {
+        validRefImages.forEach((f) => {
+          const b64 = f.buffer.toString("base64");
+          const mType = f.mimetype || "image/png";
+          imageB64List.push(`data:${mType};base64,${b64}`);
+        });
+      } else if (imageFile && imageFile.buffer) {
+        const b64 = imageFile.buffer.toString("base64");
+        const mType = imageFile.mimetype || "image/png";
+        imageB64List.push(`data:${mType};base64,${b64}`);
+      }
+
+      if (imageB64List.length > 0) {
+        body.reference_image_urls = imageB64List;
+        body.image_urls = imageB64List;
+        body.images = imageB64List;
+        body.reference_images = imageB64List;
+        if (!body.image_url) {
+          body.image_url = imageB64List[0];
+          body.start_image_url = imageB64List[0];
+        }
+      }
+
+      if (videoFile && videoFile.buffer) {
+        const b64Vid = videoFile.buffer.toString("base64");
+        const mTypeVid = videoFile.mimetype || "video/mp4";
+        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
+        body.reference_video_urls = [vidUrl];
+        body.video_urls = [vidUrl];
+        body.videos = [vidUrl];
+        body.reference_video = vidUrl;
+        body.video_url = vidUrl;
+      }
     }
 
     try {
@@ -5713,15 +5932,14 @@ if (isGen3) {
       let isReady = false;
       let videoUrl = null;
 
-      // Step 2: Poll for completion
-      for (let i = 0; i < 90; i++) {
-        // Polling up to 7.5 mins
+      // Step 2: Poll for completion (up to 10 minutes)
+      for (let i = 0; i < 120; i++) {
         console.log(`⏳ Polling attempt ${i + 1} for Wan task...`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Status: ${status}`);
+        console.log(`📌 Wan Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
@@ -5768,76 +5986,87 @@ if (isGen3) {
   async generatePixVerseVideo(
     model,
     prompt,
-    imageFile,
+    imageFile = null,
     durationStr,
     aspectRatio,
     resolution,
     wantsAudio,
+    referenceImageFiles = [],
+    videoFile = null,
+    modelType = null,
   ) {
     console.log(`🚀 Starting PixVerse Video Generation for model: ${model}...`);
+    console.log(
+      `📝 Prompt: ${prompt} | 🖼️ Image: ${imageFile ? "Yes" : "No"} | 📂 Ref Images: ${referenceImageFiles.length} | ⏱️ Duration: ${durationStr} | 📐 Ratio: ${aspectRatio} | 🖥️ Res: ${resolution} | 🔊 Audio: ${wantsAudio} | 🏷️ ModelType: ${modelType}`,
+    );
     const axios = require("axios");
 
     // 1. Fetch PixVerse provider from DB dynamically
-    const provider = await AIProvider.findOne({
-      name: "pixverse", // Ensure this provider is named 'pixverse' in your DB
+    let provider = await AIProvider.findOne({
+      name: "pixverse",
       is_active: true,
     }).select("+api_key");
 
     if (!provider || !provider.api_key) {
       throw new Error(
-        "❌ PixVerse provider not configured or API key missing in DB",
+        "❌ PixVerse (Fal.ai) provider not configured or API key missing in DB",
       );
     }
 
     const apiKey = provider.api_key.trim();
 
     // 2. Map Endpoint, Duration, and Audio constraints based on model
-    let endpointSuffix = "";
-    let durationOptions = [];
-    let supportsAudio = false;
+    const actualModel = (model || "pixverse-v6").toLowerCase();
+    const isReferenceMode =
+      modelType === "reference-to-video" ||
+      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      videoFile !== null;
 
-    switch (model) {
-      case "pixverse-c1":
-        endpointSuffix = "/fal-ai/pixverse/c1/text-to-video";
-        durationOptions = Array.from({ length: 15 }, (_, i) => i + 1); // 1 to 15
-        supportsAudio = true;
-        break;
-      case "pixverse-v4.5":
-        endpointSuffix = "/fal-ai/pixverse/v4.5/text-to-video";
-        durationOptions = [5, 8];
-        supportsAudio = false;
-        break;
-      case "pixverse-v5":
-        endpointSuffix = "/fal-ai/pixverse/v5/text-to-video";
-        durationOptions = [5, 8];
-        supportsAudio = false;
-        break;
-      case "pixverse-v5.5":
-        endpointSuffix = "/fal-ai/pixverse/v5.5/text-to-video";
-        durationOptions = [5, 8, 10];
-        supportsAudio = true;
-        break;
-      case "pixverse-v5.6":
-        endpointSuffix = "/fal-ai/pixverse/v5.6/text-to-video";
-        durationOptions = [5, 8, 10];
-        supportsAudio = true;
-        break;
-      case "pixverse-v6":
-        endpointSuffix = "/fal-ai/pixverse/v6/text-to-video";
-        durationOptions = Array.from({ length: 15 }, (_, i) => i + 1); // 1 to 15
-        supportsAudio = true;
-        break;
-      default:
-        endpointSuffix = "/fal-ai/pixverse/v6/text-to-video";
-        durationOptions = Array.from({ length: 15 }, (_, i) => i + 1);
-        supportsAudio = true;
-    }
+    let endpointSuffix = "/fal-ai/pixverse/v6/text-to-video";
+    let durationOptions = [5, 8, 10, 15];
+    let supportsAudio = true;
 
-    if (imageFile) {
-      endpointSuffix = endpointSuffix.replace(
-        "text-to-video",
-        "image-to-video",
-      );
+    if (actualModel === "pixverse-c1") {
+      endpointSuffix = isReferenceMode
+        ? "/fal-ai/pixverse/c1/reference-to-video"
+        : imageFile
+          ? "/fal-ai/pixverse/c1/image-to-video"
+          : "/fal-ai/pixverse/c1/text-to-video";
+      durationOptions = Array.from({ length: 15 }, (_, i) => i + 1);
+      supportsAudio = true;
+    } else if (actualModel === "pixverse-v4.5") {
+      endpointSuffix = imageFile
+        ? "/fal-ai/pixverse/v4.5/image-to-video"
+        : "/fal-ai/pixverse/v4.5/text-to-video";
+      durationOptions = [5, 8];
+      supportsAudio = false;
+    } else if (actualModel === "pixverse-v5") {
+      endpointSuffix = imageFile
+        ? "/fal-ai/pixverse/v5/image-to-video"
+        : "/fal-ai/pixverse/v5/text-to-video";
+      durationOptions = [5, 8];
+      supportsAudio = false;
+    } else if (actualModel === "pixverse-v5.5") {
+      endpointSuffix = imageFile
+        ? "/fal-ai/pixverse/v5.5/image-to-video"
+        : "/fal-ai/pixverse/v5.5/text-to-video";
+      durationOptions = [5, 8, 10];
+      supportsAudio = true;
+    } else if (actualModel === "pixverse-v5.6") {
+      endpointSuffix = imageFile
+        ? "/fal-ai/pixverse/v5.6/image-to-video"
+        : "/fal-ai/pixverse/v5.6/text-to-video";
+      durationOptions = [5, 8, 10];
+      supportsAudio = true;
+    } else {
+      // pixverse-v6 default
+      endpointSuffix = isReferenceMode
+        ? "/fal-ai/pixverse/v6/reference-to-video"
+        : imageFile
+          ? "/fal-ai/pixverse/v6/image-to-video"
+          : "/fal-ai/pixverse/v6/text-to-video";
+      durationOptions = [5, 8, 10, 15];
+      supportsAudio = true;
     }
 
     let baseUrl = provider.base_url || "https://queue.fal.run";
@@ -5853,16 +6082,16 @@ if (isGen3) {
     };
 
     // 4. Parse & Validate Duration
-    let parsedDuration = 5; // Safe default
+    let parsedDuration = 5;
     if (durationStr) {
       const val = parseInt(durationStr.replace("s", ""));
-      if (durationOptions.includes(val)) {
+      if (!isNaN(val)) {
         parsedDuration = val;
       }
     }
 
     // 5. Parse & Validate Resolution
-    let mappedResolution = "720p"; // Default
+    let mappedResolution = "720p";
     if (resolution) {
       const resLower = resolution.toLowerCase();
       if (resLower.includes("1080")) mappedResolution = "1080p";
@@ -5873,21 +6102,72 @@ if (isGen3) {
 
     // 6. Build Payload
     const body = {
+      model: "v6",
       prompt: prompt,
       aspect_ratio: aspectRatio || "16:9",
       duration: parsedDuration,
       resolution: mappedResolution,
+      quality: mappedResolution, // fal-ai/pixverse schema uses quality for resolution
     };
 
-    // Safely apply audio boolean only if the model permits it
     if (supportsAudio) {
-      body.generate_audio_switch = wantsAudio === true || wantsAudio === "yes";
+      body.generate_audio_switch =
+        wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true";
+      body.generate_audio = body.generate_audio_switch;
     }
 
     if (imageFile) {
       const base64Image = imageFile.buffer.toString("base64");
       const mimeType = imageFile.mimetype || "image/png";
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
+      body.image_url = imgDataUri;
+      body.start_image_url = imgDataUri;
+      body.img_id = imgDataUri;
+      body.image = imgDataUri;
+    }
+
+    if (isReferenceMode) {
+      const validRefImages = Array.isArray(referenceImageFiles)
+        ? referenceImageFiles.filter((f) => f && f.buffer)
+        : [];
+
+      const imageB64List = [];
+      if (validRefImages.length > 0) {
+        validRefImages.forEach((f) => {
+          const b64 = f.buffer.toString("base64");
+          const mType = f.mimetype || "image/png";
+          imageB64List.push(`data:${mType};base64,${b64}`);
+        });
+      } else if (imageFile && imageFile.buffer) {
+        const b64 = imageFile.buffer.toString("base64");
+        const mType = imageFile.mimetype || "image/png";
+        imageB64List.push(`data:${mType};base64,${b64}`);
+      }
+
+      if (imageB64List.length > 0) {
+        body.reference_image_urls = imageB64List;
+        body.image_urls = imageB64List;
+        body.images = imageB64List;
+        body.reference_images = imageB64List;
+        body.image_references = imageB64List.map((url) => ({ image_url: url, url: url }));
+        if (!body.image_url) {
+          body.image_url = imageB64List[0];
+          body.start_image_url = imageB64List[0];
+          body.img_id = imageB64List[0];
+          body.image = imageB64List[0];
+        }
+      }
+
+      if (videoFile && videoFile.buffer) {
+        const b64Vid = videoFile.buffer.toString("base64");
+        const mTypeVid = videoFile.mimetype || "video/mp4";
+        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
+        body.reference_video_urls = [vidUrl];
+        body.video_urls = [vidUrl];
+        body.videos = [vidUrl];
+        body.reference_video = vidUrl;
+        body.video_url = vidUrl;
+      }
     }
 
     try {
@@ -5908,15 +6188,14 @@ if (isGen3) {
       let isReady = false;
       let videoUrl = null;
 
-      // Step 2: Poll for completion
-      for (let i = 0; i < 90; i++) {
-        // Poll up to 7.5 mins
+      // Step 2: Poll for completion (up to 10 minutes)
+      for (let i = 0; i < 120; i++) {
         console.log(`⏳ Polling attempt ${i + 1} for PixVerse task...`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Status: ${status}`);
+        console.log(`📌 PixVerse Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
@@ -5924,6 +6203,10 @@ if (isGen3) {
           videoUrl = resultRes.data?.video?.url || resultRes.data?.url;
           console.log("✅ PixVerse Generation Complete!");
           break;
+        }
+
+        if (status === "IN_QUEUE" || status === "IN_PROGRESS") {
+          continue;
         }
 
         if (status === "ERROR" || status === "FAILED") {
@@ -5941,6 +6224,7 @@ if (isGen3) {
       const videoRes = await axios.get(videoUrl, {
         responseType: "arraybuffer",
       });
+      console.log("✅ Video downloaded successfully");
       return Buffer.from(videoRes.data);
     } catch (error) {
       console.error(

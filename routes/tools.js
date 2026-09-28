@@ -1340,8 +1340,8 @@ const calculateVideoCreditCost = (
   const pricingMatrix = {
     // Google Veo Family
     "veo-3.1-lite": {
-      "720p": 7,
-      "1080p": 8,
+      "720p": 5,
+      "1080p": 7,
     },
     "veo-3.1-fast": {
       "720p": 9,
@@ -1449,34 +1449,34 @@ const calculateVideoCreditCost = (
       "1080p": { audioOff: 8, audioOn: 10 },
     },
     "pixverse-c1": {
-      "360p": 3,
-      "540p": 3,
-      "720p": 4,
-      "1080p": 8,
+      "360p": { audioOff: 3, audioOn: 4 },
+      "540p": { audioOff: 4, audioOn: 5 },
+      "720p": { audioOff: 5, audioOn: 6 },
+      "1080p": { audioOff: 8, audioOn: 10 },
     },
     "pixverse-v4.5": {
       "360p": 3,
       "540p": 3,
       "720p": 4,
-      "1080p": 8,
+      "1080p": 7,
     },
     "pixverse-v5": {
       "360p": 3,
       "540p": 3,
       "720p": 4,
-      "1080p": 8,
+      "1080p": 7,
     },
     "pixverse-v5.5": {
-      "360p": 3,
-      "540p": 3,
-      "720p": 4,
-      "1080p": 8,
+      "360p": { audioOff: 3, audioOn: 4 },
+      "540p": { audioOff: 3, audioOn: 4 },
+      "720p": { audioOff: 4, audioOn: 5 },
+      "1080p": { audioOff: 7, audioOn: 8 },
     },
     "pixverse-v5.6": {
-      "360p": 3,
-      "540p": 3,
-      "720p": 4,
-      "1080p": 8,
+      "360p": { audioOff: 6, audioOn: 10 },
+      "540p": { audioOff: 6, audioOn: 10 },
+      "720p": { audioOff: 8, audioOn: 12 },
+      "1080p": { audioOff: 13, audioOn: 17 },
     },
 
     // Pika Models
@@ -1488,12 +1488,10 @@ const calculateVideoCreditCost = (
       "720p": 4,
       "1080p": 8,
     },
-    "Pika v2.1": {
-      "720p": 4,
-      "1080p": 8,
-    },
+    "Pika v2.1": 7,
+    "pika-2.1": 7,
 
-    // Seedance Dynamic / Token Baseline
+    // Seedance Dynamic / Token Baseline (Temporary until live token cost is confirmed with client)
     "seedance-2.5": {
       "480p": 19,
       "720p": 40,
@@ -1529,11 +1527,11 @@ const calculateVideoCreditCost = (
   if (typeof modelPricing === "number") {
     creditsPerSec = modelPricing;
   } else if (modelPricing && typeof modelPricing === "object") {
-    // Check if it's Audio ON / OFF object
+    // Check if it's Audio ON / OFF object directly
     if ("audioOff" in modelPricing || "audioOn" in modelPricing) {
       creditsPerSec = wantsAudio
-        ? modelPricing.audioOn || modelPricing.audioOff
-        : modelPricing.audioOff || modelPricing.audioOn;
+        ? (modelPricing.audioOn ?? modelPricing.audioOff ?? 9)
+        : (modelPricing.audioOff ?? modelPricing.audioOn ?? 9);
     } else {
       // It's Resolution mapped
       let resKey = "720p";
@@ -1555,8 +1553,8 @@ const calculateVideoCreditCost = (
         creditsPerSec = resVal;
       } else if (resVal && typeof resVal === "object") {
         creditsPerSec = wantsAudio
-          ? resVal.audioOn || resVal.audioOff
-          : resVal.audioOff || resVal.audioOn;
+          ? (resVal.audioOn ?? resVal.audioOff ?? 9)
+          : (resVal.audioOff ?? resVal.audioOn ?? 9);
       }
     }
   }
@@ -1758,6 +1756,9 @@ router.post(
             aspectRatio,
             resolution,
             wantsAudio,
+            referenceImageFiles,
+            videoFile,
+            modelType,
           );
           break;
         case "Pika v2.1":
@@ -1802,6 +1803,11 @@ router.post(
             imageFile,
             duration,
             aspectRatio,
+            resolution,
+            wantsAudio,
+            referenceImageFiles,
+            videoFile,
+            modelType,
           );
           break;
         // 👉 WHEN IT IS USED: If the user selects a Wan model
@@ -1817,7 +1823,11 @@ router.post(
             duration,
             aspectRatio,
             resolution,
+            wantsAudio,
             audioUrl,
+            referenceImageFiles,
+            videoFile,
+            modelType,
           );
           break;
 
@@ -1834,7 +1844,10 @@ router.post(
             duration,
             aspectRatio,
             resolution,
-            wantsAudio, // Safely filtered inside aiService.js based on model capabilities
+            wantsAudio,
+            referenceImageFiles,
+            videoFile,
+            modelType,
           );
           break;
         case "bernini-r":
@@ -4433,7 +4446,7 @@ router.post(
 
       // 2. Billing rate (9 credits/sec)
       const durationSeconds = parseInt(duration) || 8;
-      const creditCost = durationSeconds * 9;
+      const creditCost = durationSeconds * 10;
 
       if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
         return res.status(402).json({
@@ -5484,7 +5497,8 @@ router.post(
       }
 
       const requestedSec = parseInt(duration) || 8;
-      const creditCost = requestedSec * 9;
+      // Billing rate for Veo 3.1 Fast 1080p (10 credits/sec)
+      const creditCost = requestedSec * 10;
 
       if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
         return res.status(402).json({
@@ -5835,6 +5849,7 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
       const parameters = {
         aspectRatio: formattedAspect,
         durationSeconds: durationSec,
+        // resolution: "1080p",
       };
 
       console.log(`[StepIntoHistory - Stage 4] Sending payload with ${referenceImagesPayload.length} reference images, aspectRatio: ${formattedAspect}, duration: ${durationSec}s`);
