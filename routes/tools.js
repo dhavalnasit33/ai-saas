@@ -1437,6 +1437,7 @@ const calculateVideoCreditCost = (
       "1080p": 17,
     },
     "wan-2.5-preview": {
+      "480p": 5,
       "720p": 9,
       "1080p": 17,
     },
