@@ -1333,8 +1333,132 @@ const calculateVideoCreditCost = (
   durationStr,
   resolution,
   wantsAudio = false,
+  aspectRatio = "16:9",
+  hasVideoReference = false,
+  inputVideoDuration = 0,
 ) => {
   const duration = parseInt(durationStr?.toString().replace("s", "") || "8");
+
+  // ==========================================
+  // DYNAMIC TOKEN BILLING FOR SEEDANCE 2.5
+  // ==========================================
+  const modelLower = (model || "").toLowerCase();
+  if (modelLower === "seedance-2.5") {
+    // 1. Resolve dimensions from resolution and aspect ratio
+    const resStr = resolution?.toString().toLowerCase() || "720p";
+    const ratioStr = aspectRatio?.toString().trim() || "16:9";
+
+    let width = 1280;
+    let height = 720;
+
+    if (resStr.includes("1080")) {
+      switch (ratioStr) {
+        case "9:16":
+          width = 1080;
+          height = 1920;
+          break;
+        case "1:1":
+          width = 1080;
+          height = 1080;
+          break;
+        case "4:3":
+          width = 1440;
+          height = 1080;
+          break;
+        case "3:4":
+          width = 1080;
+          height = 1440;
+          break;
+        case "21:9":
+          width = 1920;
+          height = 822;
+          break;
+        case "16:9":
+        default:
+          width = 1920;
+          height = 1080;
+          break;
+      }
+    } else if (resStr.includes("480")) {
+      switch (ratioStr) {
+        case "9:16":
+          width = 480;
+          height = 854;
+          break;
+        case "1:1":
+          width = 480;
+          height = 480;
+          break;
+        case "4:3":
+          width = 640;
+          height = 480;
+          break;
+        case "3:4":
+          width = 480;
+          height = 640;
+          break;
+        case "21:9":
+          width = 854;
+          height = 366;
+          break;
+        case "16:9":
+        default:
+          width = 854;
+          height = 480;
+          break;
+      }
+    } else {
+      // Default 720p
+      switch (ratioStr) {
+        case "9:16":
+          width = 720;
+          height = 1280;
+          break;
+        case "1:1":
+          width = 720;
+          height = 720;
+          break;
+        case "4:3":
+          width = 960;
+          height = 720;
+          break;
+        case "3:4":
+          width = 720;
+          height = 960;
+          break;
+        case "21:9":
+          width = 1280;
+          height = 548;
+          break;
+        case "16:9":
+        default:
+          width = 1280;
+          height = 720;
+          break;
+      }
+    }
+
+    // 2. Billable seconds
+    const billableSeconds = hasVideoReference
+      ? (Number(inputVideoDuration) || 0) + duration
+      : duration;
+
+    // 3. Tokens formula: (height * width * billableSeconds * 24) / 1024
+    const tokens = (height * width * billableSeconds * 24) / 1024;
+
+    // 4. Token price per 1,000 tokens
+    const tokenPricePer1000 = resStr.includes("1080") ? 0.0234 : 0.0214;
+
+    // 5. API Cost with 0.6x video reference multiplier if applicable
+    let apiCost = (tokens / 1000) * tokenPricePer1000;
+    if (hasVideoReference) {
+      apiCost *= 0.6;
+    }
+
+    // 6. OneChat Credits = CEILING(API Cost / 0.012)
+    const creditValueUsd = 0.012;
+    return Math.ceil(apiCost / creditValueUsd);
+  }
 
   // Exact Final Credits/sec matrix from Master Video Matrix (Anchor: $0.012 = 1 Credit)
   const pricingMatrix = {
@@ -1492,12 +1616,7 @@ const calculateVideoCreditCost = (
     "Pika v2.1": 7,
     "pika-2.1": 7,
 
-    // Seedance Dynamic / Token Baseline (Temporary until live token cost is confirmed with client)
-    "seedance-2.5": {
-      "480p": 19,
-      "720p": 40,
-      "1080p": 97,
-    },
+    // Seedance 2.0 and 2.0 Fast (Fixed rate per matrix)
     "seedance-2.0": {
       "480p": 19,
       "720p": 26,
@@ -1594,7 +1713,9 @@ router.post(
     for (const f of files) {
       if (f.fieldname === "image" || f.fieldname === "file") {
         imageFile = f;
-        referenceImageFiles.push(f);
+        if (modelType === "reference-to-video") {
+          referenceImageFiles.push(f);
+        }
       } else if (f.fieldname.startsWith("image")) {
         if (!imageFile) imageFile = f;
         referenceImageFiles.push(f);
@@ -1674,12 +1795,16 @@ router.post(
         user.email && superAdminEmails.includes(user.email.toLowerCase());
 
       // 2. CALCULATE DYNAMIC COST
+      const hasVideoRef = Boolean(videoFile || preUploadedVideoUrl);
       const totalCost = calculateVideoCreditCost(
         model,
         user.plan,
         duration,
         resolution,
         wantsAudio,
+        aspectRatio,
+        hasVideoRef,
+        0,
       );
 
       // 3. CHECK BALANCE (bypassed for super admin testing)
@@ -3320,7 +3445,7 @@ router.post(
         subtab,
         job_id,
         wordcount,
-        system_prompt = "You are a helpful AI assistant, your objective is to help the user write better content and improve their grammar. Don't think too long, always respond as quickly as possible, in less than 5 to 10 seconds if possible.",
+        system_prompt = "You are a helpful AI assistant. Provide clear and concise answers.",
       } = req.body;
 
       if (!prompt || typeof prompt !== "string" || prompt.trim() === "") {

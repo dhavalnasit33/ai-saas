@@ -4763,11 +4763,13 @@ class AIService {
 
       const actualModel = model || "gen4.5";
 
-      // Strict Duration Mapping
+      // Strict Duration Mapping (Runway supports 2-10s)
       let parsedDuration = 5;
       if (durationStr) {
         const rawDuration = parseInt(durationStr.replace("s", ""));
-        if ([5, 10].includes(rawDuration)) {
+        if (!isNaN(rawDuration) && rawDuration >= 2 && rawDuration <= 10) {
+          parsedDuration = rawDuration;
+        } else if ([5, 10].includes(rawDuration)) {
           parsedDuration = rawDuration;
         }
       }
@@ -4912,56 +4914,82 @@ if (isGen3) {
 
     // 2. Map frontend model ID to fal.ai endpoint
     const actualKlingModel = (model || "kling-3-standard").toLowerCase();
-    const isReferenceMode =
-      modelType === "reference-to-video" ||
+    const hasRefFiles =
       (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
       videoFile !== null;
+    const isReferenceMode =
+      modelType === "reference-to-video"
+        ? (hasRefFiles || imageFile !== null)
+        : hasRefFiles;
 
-    let endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/text-to-video";
+    let endpoint =
+      "https://queue.fal.run/fal-ai/kling-video/v3/pro/text-to-video";
 
     if (actualKlingModel === "kling-o3-pro") {
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/pro/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/o3/pro/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/pro/image-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/o3/pro/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/pro/text-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/o3/pro/text-to-video";
       }
     } else if (actualKlingModel === "kling-o3-standard") {
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/standard/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/o3/standard/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/standard/image-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/o3/standard/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/o3/standard/text-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/o3/standard/text-to-video";
       }
     } else if (actualKlingModel === "kling-3-turbo") {
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/turbo/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v3/turbo/standard/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/turbo/image-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v3/turbo/standard/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/turbo/text-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v3/turbo/standard/text-to-video";
       }
-    } else if (actualKlingModel === "kling-3-standard" || actualKlingModel === "kling-v3") {
+    } else if (
+      actualKlingModel === "kling-3-standard" ||
+      actualKlingModel === "kling-v3"
+    ) {
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v3/standard/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/image-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v3/standard/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v3/pro/text-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v3/standard/text-to-video";
       }
     } else if (actualKlingModel === "kling-2.6-pro") {
       if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/image-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/text-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v2.6/pro/text-to-video";
       }
-    } else if (actualKlingModel.includes("2.5") || actualKlingModel.includes("v2-5")) {
+    } else if (
+      actualKlingModel.includes("2.5") ||
+      actualKlingModel.includes("v2-5")
+    ) {
       if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
+        endpoint =
+          "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/pro/text-to-video";
       }
     }
 
@@ -4978,7 +5006,10 @@ if (isGen3) {
     if (durationStr) {
       const val = parseInt(durationStr.replace("s", ""));
       if (!isNaN(val)) {
-        if (actualKlingModel.includes("2.5") || actualKlingModel.includes("2.6")) {
+        if (
+          actualKlingModel.includes("2.5") ||
+          actualKlingModel.includes("2.6")
+        ) {
           parsedDuration = val >= 10 ? "10" : "5";
         } else {
           parsedDuration = String(Math.min(Math.max(val, 3), 15));
@@ -5312,26 +5343,33 @@ if (isGen3) {
 
     if (model === "seedance-2.5") {
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.5/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.5/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.5/image-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.5/image-to-video";
       } else {
         endpoint = "https://queue.fal.run/bytedance/seedance-2.5/text-to-video";
       }
     } else if (model === "seedance-2.0-fast") {
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/fast/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.0/fast/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/fast/image-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.0/fast/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/fast/text-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.0/fast/text-to-video";
       }
     } else {
       // seedance-2.0 default
       if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video";
       } else if (imageFile) {
-        endpoint = "https://queue.fal.run/bytedance/seedance-2.0/image-to-video";
+        endpoint =
+          "https://queue.fal.run/bytedance/seedance-2.0/image-to-video";
       } else {
         endpoint = "https://queue.fal.run/bytedance/seedance-2.0/text-to-video";
       }
@@ -5434,7 +5472,11 @@ if (isGen3) {
       }
 
       // Ensure prompt mentions [Image1] if user didn't specify placeholders
-      if (body.image_urls && body.image_urls.length > 0 && !body.prompt.includes("[Image")) {
+      if (
+        body.image_urls &&
+        body.image_urls.length > 0 &&
+        !body.prompt.includes("[Image")
+      ) {
         const imagePlaceholders = body.image_urls
           .map((_, idx) => `[Image${idx + 1}]`)
           .join(" ");
@@ -5787,43 +5829,57 @@ if (isGen3) {
     const actualModel = (model || "wan-3").toLowerCase();
     const isReferenceMode =
       modelType === "reference-to-video" ||
-      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      (Array.isArray(referenceImageFiles) &&
+        referenceImageFiles.length > 0 &&
+        modelType !== "image-to-video") ||
       videoFile !== null;
+
+    const hasVideoRef = videoFile !== null && videoFile.buffer;
+    const hasImageRef = (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) || (imageFile && imageFile.buffer);
 
     let endpoint = "https://queue.fal.run/alibaba/wan-3.0/text-to-video";
 
     if (actualModel === "wan-3-prime") {
-      if (isReferenceMode) {
+      if (hasVideoRef) {
         endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/reference-to-video";
-      } else if (imageFile) {
+      } else if (hasImageRef) {
         endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/image-to-video";
       } else {
         endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/text-to-video";
       }
     } else if (actualModel === "wan-3") {
-      if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/fal-ai/wan-3/reference-to-video";
-      } else if (imageFile) {
+      if (hasVideoRef) {
+        endpoint = "https://queue.fal.run/alibaba/wan-3.0/reference-to-video";
+      } else if (hasImageRef) {
         endpoint = "https://queue.fal.run/alibaba/wan-3.0/image-to-video";
       } else {
         endpoint = "https://queue.fal.run/alibaba/wan-3.0/text-to-video";
       }
     } else if (actualModel === "wan-2.7") {
-      if (isReferenceMode) {
-        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/reference-to-video";
-      } else if (imageFile) {
-        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/image-to-video";
+      if (hasVideoRef) {
+        endpoint = "https://queue.fal.run/wan/v2.7/reference-to-video";
+      } else if (hasImageRef) {
+        endpoint = "https://queue.fal.run/wan/v2.7/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/text-to-video";
+        endpoint = "https://queue.fal.run/wan/v2.7/text-to-video";
       }
     } else if (actualModel === "wan-2.6") {
-      endpoint = imageFile
-        ? "https://queue.fal.run/fal-ai/wan/v2.6/image-to-video"
-        : "https://queue.fal.run/fal-ai/wan/v2.6/text-to-video";
-    } else if (actualModel === "wan-2.5-preview") {
-      endpoint = imageFile
+      if (hasVideoRef) {
+        endpoint = "https://queue.fal.run/wan/v2.6/reference-to-video";
+      } else if (hasImageRef) {
+        endpoint = "https://queue.fal.run/wan/v2.6/image-to-video";
+      } else {
+        endpoint = "https://queue.fal.run/wan/v2.6/text-to-video";
+      }
+    } else if (actualModel.includes("2.5") || actualModel.includes("preview")) {
+      endpoint = hasImageRef
         ? "https://queue.fal.run/fal-ai/wan-25-preview/image-to-video"
         : "https://queue.fal.run/fal-ai/wan-25-preview/text-to-video";
+    } else {
+      // Fallback
+      endpoint = hasImageRef
+        ? "https://queue.fal.run/fal-ai/wan/v2.1/image-to-video"
+        : "https://queue.fal.run/fal-ai/wan/v2.1/text-to-video";
     }
 
     console.log(`📤 Sending request to Wan Queue: ${endpoint}`);
@@ -6019,7 +6075,9 @@ if (isGen3) {
     const actualModel = (model || "pixverse-v6").toLowerCase();
     const isReferenceMode =
       modelType === "reference-to-video" ||
-      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      (Array.isArray(referenceImageFiles) &&
+        referenceImageFiles.length > 0 &&
+        modelType !== "image-to-video") ||
       videoFile !== null;
 
     let endpointSuffix = "/fal-ai/pixverse/v6/text-to-video";
@@ -6149,7 +6207,11 @@ if (isGen3) {
         body.image_urls = imageB64List;
         body.images = imageB64List;
         body.reference_images = imageB64List;
-        body.image_references = imageB64List.map((url) => ({ image_url: url, url: url }));
+        body.image_references = imageB64List.map((url, index) => ({
+          image_url: url,
+          url: url,
+          ref_name: `image_${index + 1}`,
+        }));
         if (!body.image_url) {
           body.image_url = imageB64List[0];
           body.start_image_url = imageB64List[0];
@@ -8861,17 +8923,17 @@ if (isGen3) {
                 data.choices[0].delta.content
               ) {
                 const content = data.choices[0].delta.content;
-                fullResponse += content;
+                  fullResponse += content;
 
-                if (onChunk) {
-                  onChunk({
-                    content,
-                    fullResponse,
-                    provider: provider.name,
-                    model: model.model,
-                  });
+                  if (onChunk) {
+                    onChunk({
+                      content,
+                      fullResponse,
+                      provider: provider.name,
+                      model: model.model,
+                    });
+                  }
                 }
-              }
 
               if (data.usage) {
                 totalTokens = data.usage.total_tokens;
@@ -9854,6 +9916,10 @@ if (isGen3) {
           max_tokens: max_tokens || provider.max_tokens,
           temperature: 0.7,
           stream: true,
+          include_reasoning: false,
+          provider: {
+            sort: "throughput",
+          },
         },
         {
           headers: {
@@ -9904,25 +9970,24 @@ if (isGen3) {
 
           try {
             const data = JSON.parse(dataStr);
-            const delta = data?.choices?.[0]?.delta;
+           const delta = data?.choices?.[0]?.delta;
 
-            // ✅ Only extract real user-facing content (ignore internal thinking steps)
-            const chunkText = delta?.content || "";
+// Capture standard content OR reasoning/thought content
+const chunkText = delta?.content || delta?.reasoning_content || delta?.reasoning || "";
 
-            // ✅ Append and emit if we captured any text
-            if (chunkText) {
-              fullResponse += chunkText;
+if (chunkText) {
+  fullResponse += chunkText;
 
-              if (onChunk) {
-                onChunk({
-                  content: chunkText,
-                  fullResponse,
-                  provider: provider.name,
-                  model: model.model,
-                });
-              }
-            }
-
+  if (onChunk) {
+    onChunk({
+      content: chunkText,
+      fullResponse,
+      provider: provider.name,
+      model: model.model,
+      isReasoning: !delta?.content && Boolean(delta?.reasoning_content || delta?.reasoning)
+    });
+  }
+}
             if (data.usage) {
               totalTokens = data.usage.total_tokens;
             }

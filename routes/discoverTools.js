@@ -945,15 +945,7 @@ router.get("/bookmarks", protect, async (req, res) => {
         category: "video",
         custom_url: "/generate-ai-videos",
       },
-      "kling-v3": {
-        title: "Kling 3",
-        slug: "kling-v3",
-        tab_image: "assets/images/kling.png",
-        short_description: "Advanced physics and motion with Kling 3",
-        description: "Advanced physics and motion with Kling 3",
-        category: "video",
-        custom_url: "/generate-ai-videos",
-      },
+      
       "Pika v2.2": {
         title: "Pika 2.2",
         slug: "Pika v2.2",
