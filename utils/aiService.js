@@ -5857,11 +5857,11 @@ if (isGen3) {
       }
     } else if (actualModel === "wan-2.7") {
       if (hasVideoRef) {
-        endpoint = "https://queue.fal.run/wan/v2.7/reference-to-video";
+        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/reference-to-video";
       } else if (hasImageRef) {
-        endpoint = "https://queue.fal.run/wan/v2.7/image-to-video";
+        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/image-to-video";
       } else {
-        endpoint = "https://queue.fal.run/wan/v2.7/text-to-video";
+        endpoint = "https://queue.fal.run/fal-ai/wan/v2.7/text-to-video";
       }
     } else if (actualModel === "wan-2.6") {
       if (hasVideoRef) {
