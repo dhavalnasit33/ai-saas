@@ -10636,6 +10636,7 @@ if (chunkText) {
           max_tokens: max_tokens || provider.max_tokens,
           temperature: 0.7,
           stream: true,
+          reasoning: { effort: "minimal" },
         },
         {
           headers: {

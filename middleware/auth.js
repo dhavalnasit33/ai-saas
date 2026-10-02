@@ -215,7 +215,17 @@ exports.protect = async (req, res, next) => {
       req.originalUrl.includes('/use-tab') || 
       req.originalUrl.includes('/ai/general') ||
       req.originalUrl.includes('/ai/title') ||
-      req.originalUrl.includes('/keyword');
+      req.originalUrl.includes('/keyword') ;
+      // ||(req.originalUrl.includes('/chat-history') && req.method === 'POST');
+
+    // List / Browse / Read-only endpoints are exempt from blocking (including pages/slug)
+    const isBrowseOrListEndpoint = 
+      req.method === 'GET' ||
+      req.originalUrl.includes('/pages') ||
+      req.originalUrl.includes('/home-tool-tags') ||
+      req.originalUrl.includes('/discover-tool') ||
+      req.originalUrl.includes('/tools') ||
+      req.originalUrl.includes('/category');
 
     if (isGenerationEndpoint) {
       if (guestUsage.generation_count >= 5) {
@@ -226,7 +236,7 @@ exports.protect = async (req, res, next) => {
         });
       }
       guestUsage.generation_count += 1;
-    } else {
+    } else if (!isBrowseOrListEndpoint) {
       if (!isUserWiseEndpoint && guestUsage.api_count >= GUEST_API_LIMIT) {
         return res.status(403).json({
           success: false,
@@ -234,6 +244,8 @@ exports.protect = async (req, res, next) => {
             "You’ve reached your free token usage limit as a guest user. Please create a free account to continue.",
         });
       }
+      guestUsage.api_count += 1;
+    } else {
       guestUsage.api_count += 1;
     }
 

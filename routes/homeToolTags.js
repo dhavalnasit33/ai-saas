@@ -15,7 +15,7 @@ const deduplicateTools = discoverToolsRoutes.deduplicateTools;
 router.get("/", protect, authorize("Admin"), async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    const limit = parseInt(req.query.limit) || 200;
     const search = req.query.search || "";
 
     const query = search ? { name: { $regex: search, $options: "i" } } : {};
@@ -490,14 +490,26 @@ router.get("/tags-by-category", protect, async (req, res) => {
           p.tags.forEach((t) => usedTagIds.add(t.toString()));
         }
       });
-    } else {
+     } else {
       // 4️⃣ DEFAULT: Normal tools category filtering
       let allTools = await fetchAllToolsData();
-
-      allTools = allTools.filter(
-        (tool) => tool.category?.toLowerCase() === categorySlug.toLowerCase(),
-      );
-
+      
+      // Fetch HomeToolCategory ID for the slug (e.g. education)
+      let filterCatId = null;
+      const catDoc = await HomeToolCategory.findOne({
+        slug: categorySlug,
+        is_active: true,
+      }).lean();
+      if (catDoc) {
+        filterCatId = catDoc._id.toString();
+      }
+      allTools = allTools.filter((tool) => {
+        const matchCategoryString = tool.category?.toLowerCase() === categorySlug.toLowerCase();
+        const matchCategoryId = filterCatId && (tool.categories || []).some(
+          (c) => (c._id ? c._id.toString() : c.toString()) === filterCatId
+        );
+        return matchCategoryString || matchCategoryId;
+      });
       allTools.forEach((tool) => {
         if (tool.tags?.length) {
           tool.tags.forEach((tag) => {
@@ -507,6 +519,7 @@ router.get("/tags-by-category", protect, async (req, res) => {
         }
       });
     }
+
 
     // 5️⃣ Filter only tags that exist in DB
     const usedTags = Array.from(usedTagIds)

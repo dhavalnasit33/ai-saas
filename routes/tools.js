@@ -3445,7 +3445,7 @@ router.post(
         subtab,
         job_id,
         wordcount,
-        system_prompt = "You are a helpful AI assistant. Provide clear and concise answers.",
+        system_prompt = "You are an AI assistant in OneChat AI. Follow the user's instructions and provide accurate, helpful, and relevant responses.",
       } = req.body;
 
       if (!prompt || typeof prompt !== "string" || prompt.trim() === "") {
