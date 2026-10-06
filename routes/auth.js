@@ -590,7 +590,7 @@ router.post("/create-user", async (req, res) => {
 // @access  Public
 router.post("/register", signupLimiter, async (req, res) => {
   try {
-    const { firstName, lastName, email, password, region } = req.body;
+    const { firstName, lastName, email, password, region, registration_attribution, } = req.body;
 
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({
@@ -655,7 +655,25 @@ router.post("/register", signupLimiter, async (req, res) => {
       gclid: gclidVal,
       gbraid: gbraidVal,
       wbraid: wbraidVal,
+      registration_attribution:
+        registration_attribution && registration_attribution.cta_id
+          ? {
+            source: registration_attribution.page || "landing_page",
+            cta_id: registration_attribution.cta_id,
+            cta_label: registration_attribution.cta_label,
+            section_id: registration_attribution.section_id,
+            section_label: registration_attribution.section_label,
+            item_id: registration_attribution.item_id || null,
+            item_label: registration_attribution.item_label || null,
+            clicked_at: registration_attribution.clicked_at
+              ? new Date(registration_attribution.clicked_at)
+              : null,
+            registered_at: new Date(),
+          }
+          : null,
     });
+
+
     await user.save();
 
     const token = await generateToken(user._id);

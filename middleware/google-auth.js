@@ -60,7 +60,7 @@ const verifyGoogleToken = async (idToken) => {
 
 const handleGoogleAuth = async (req, res) => {
   try {
-    const { idToken, region } = req.body;
+    const { idToken, region, registration_attribution } = req.body;
 
     if (!idToken) {
       return res.status(400).json({
@@ -224,6 +224,22 @@ const handleGoogleAuth = async (req, res) => {
         gclid: gclidVal,
         gbraid: gbraidVal,
         wbraid: wbraidVal,
+        registration_attribution:
+          registration_attribution && registration_attribution.cta_id
+            ? {
+              source: registration_attribution.page || "landing_page",
+              cta_id: registration_attribution.cta_id,
+              cta_label: registration_attribution.cta_label,
+              section_id: registration_attribution.section_id,
+              section_label: registration_attribution.section_label,
+              item_id: registration_attribution.item_id || null,
+              item_label: registration_attribution.item_label || null,
+              clicked_at: registration_attribution.clicked_at
+                ? new Date(registration_attribution.clicked_at)
+                : null,
+              registered_at: new Date(),
+            }
+            : null,
       });
 
       // Generate JWT token

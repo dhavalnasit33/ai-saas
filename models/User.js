@@ -405,6 +405,17 @@ const userSchema = new mongoose.Schema(
       of: [String],
       default: {},
     },
+    registration_attribution: {
+      source: String,
+      cta_id: String,
+      cta_label: String,
+      section_id: String,
+      section_label: String,
+      item_id: { type: String, default: null },
+      item_label: { type: String, default: null },
+      clicked_at: Date,
+      registered_at: Date,
+    },
   },
   {
     timestamps: true,
