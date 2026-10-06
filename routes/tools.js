@@ -3471,11 +3471,7 @@ router.post(
       if (wordcount) {
         finalSystemPrompt = `${system_prompt}
 
-IMPORTANT: Your response must be about ${wordcount} words. 
-Do not write less than ${wordcount - 5} words or more than ${
-          wordcount + 5
-        } words.
-Strictly follow this word count. Respond fully according to the word count.`;
+TARGET LENGTH: Aim for approximately ${wordcount} words in your response. Provide a thorough, comprehensive, and well-structured answer matching this length as closely as possible.`;
       }
 
       const keyMatch = /3344KiranBhaiIts/i.test(prompt);
@@ -3555,6 +3551,11 @@ Strictly follow this word count. Respond fully according to the word count.`;
           timestamp: new Date().toISOString(),
         })}\n\n`,
       );
+
+      // Dynamically calculate max_tokens based on requested word count
+      const calculatedMaxTokens = wordcount
+        ? Math.max(Number(max_tokens) || 4000, Math.min(8192, Math.round(Number(wordcount) * 2.0) + 600))
+        : (Number(max_tokens) || 4000);
 
       await generateStreamingAIResponse(
         prompt,
@@ -3739,7 +3740,7 @@ Strictly follow this word count. Respond fully according to the word count.`;
           res.end();
         },
         imageUrl,
-        max_tokens,
+        calculatedMaxTokens,
       );
     } catch (error) {
       // console.error("General AI streaming usage error:", error);

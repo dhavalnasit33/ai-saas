@@ -471,7 +471,7 @@ router.get("/tags-by-category", protect, async (req, res) => {
         "png-to-jpg-converter",
         "jpg-to-png-converter",
       ],
-      design: ["logo-generator"],
+      // design: ["logo-generator"],
       sales: ["email-verifier"],
     };
 
