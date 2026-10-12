@@ -32,6 +32,35 @@ const {
 } = require("../utils/violations");
 const AIProvider = require("../models/AIProvider");
 
+// Helper to deduct video credits: Monthly first, then Top-up
+async function deductVideoCreditsHelper(userId, totalCost, isSuperAdmin = false) {
+  if (isSuperAdmin || totalCost <= 0) return null;
+  const user = await User.findById(userId);
+  if (!user) return null;
+
+  let remainingToDeduct = totalCost;
+
+  // 1. Monthly credits first
+  if ((user.video_credits || 0) > 0) {
+    if (user.video_credits >= remainingToDeduct) {
+      user.video_credits -= remainingToDeduct;
+      remainingToDeduct = 0;
+    } else {
+      remainingToDeduct -= user.video_credits;
+      user.video_credits = 0;
+    }
+  }
+
+  // 2. Top-up credits for remaining
+  if (remainingToDeduct > 0 && (user.topup_video_credits || 0) > 0) {
+    user.topup_video_credits = Math.max(0, user.topup_video_credits - remainingToDeduct);
+    remainingToDeduct = 0;
+  }
+
+  await user.save();
+  return user;
+}
+
 
 function extractLatestUserMessage(prompt) {
   if (!prompt || typeof prompt !== "string") return "";
@@ -1808,10 +1837,14 @@ router.post(
       );
 
       // 3. CHECK BALANCE (bypassed for super admin testing)
-      if (!isSuperAdmin && (user.video_credits || 0) < totalCost) {
+      const monthlyCredits = user.video_credits || 0;
+      const topupCredits = user.topup_video_credits || 0;
+      const totalAvailableCredits = monthlyCredits + topupCredits;
+
+      if (!isSuperAdmin && totalAvailableCredits < totalCost) {
         return res.status(402).json({
           success: false,
-          error: `Insufficient video credits. This video requires ${totalCost} credits, but you only have ${user.video_credits || 0}.`,
+          error: `Insufficient video credits. This video requires ${totalCost} credits, but you only have ${totalAvailableCredits} (${monthlyCredits} monthly + ${topupCredits} top-up).`,
         });
       }
 
@@ -1988,7 +2021,25 @@ router.post(
 
       // 5. DEDUCT CREDITS UPON SUCCESS (bypassed for super admin testing)
       if (!isSuperAdmin) {
-        user.video_credits -= totalCost;
+        let remainingToDeduct = totalCost;
+
+        // Step 1: Use monthly video credits first
+        if (user.video_credits > 0) {
+          if (user.video_credits >= remainingToDeduct) {
+            user.video_credits -= remainingToDeduct;
+            remainingToDeduct = 0;
+          } else {
+            remainingToDeduct -= user.video_credits;
+            user.video_credits = 0;
+          }
+        }
+
+        // Step 2: Use top-up video credits for any remaining amount
+        if (remainingToDeduct > 0 && user.topup_video_credits > 0) {
+          user.topup_video_credits = Math.max(0, user.topup_video_credits - remainingToDeduct);
+          remainingToDeduct = 0;
+        }
+
         await user.save();
       }
 
@@ -4575,10 +4626,11 @@ router.post(
       const durationSeconds = parseInt(duration) || 8;
       const creditCost = durationSeconds * 10;
 
-      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
+      const totalAvailCredits = (user.video_credits || 0) + (user.topup_video_credits || 0);
+      if (!isSuperAdmin && totalAvailCredits < creditCost) {
         return res.status(402).json({
           success: false,
-          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${user.video_credits || 0}.`,
+          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${totalAvailCredits} (${user.video_credits || 0} monthly + ${user.topup_video_credits || 0} top-up).`,
         });
       }
 
@@ -4753,9 +4805,7 @@ router.post(
                   });
 
                   if (!isSuperAdmin) {
-                    await User.findByIdAndUpdate(req.user.id, {
-                      $inc: { video_credits: -creditCost },
-                    });
+                    await deductVideoCreditsHelper(req.user.id, creditCost, isSuperAdmin);
                   }
 
                   // Google Veo Extension API specifically requires the full download URI:
@@ -4776,9 +4826,7 @@ router.post(
                   return res.send(Buffer.from(dlRes.data));
                 } else if (targetVideo?.bytesBase64Encoded) {
                   if (!isSuperAdmin) {
-                    await User.findByIdAndUpdate(req.user.id, {
-                      $inc: { video_credits: -creditCost },
-                    });
+                    await deductVideoCreditsHelper(req.user.id, creditCost, isSuperAdmin);
                   }
 
                   res.set("Content-Type", "video/mp4");
@@ -4952,9 +5000,7 @@ router.post(
 
       // 7. Deduct credits (bypassed for super admin testing)
       if (!isSuperAdmin) {
-        await User.findByIdAndUpdate(req.user.id, {
-          $inc: { video_credits: -creditCost },
-        });
+        await deductVideoCreditsHelper(req.user.id, creditCost, isSuperAdmin);
       }
 
       // 8. Stream video binary back
@@ -5050,10 +5096,11 @@ router.post(
 
       const creditCost = extendSec * 9;
 
-      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
+      const totalAvailCredits = (user.video_credits || 0) + (user.topup_video_credits || 0);
+      if (!isSuperAdmin && totalAvailCredits < creditCost) {
         return res.status(402).json({
           success: false,
-          error: `Insufficient video credits. You need ${creditCost} credits.`,
+          error: `Insufficient video credits. You need ${creditCost} credits, but you have ${totalAvailCredits} (${user.video_credits || 0} monthly + ${user.topup_video_credits || 0} top-up).`,
         });
       }
 
@@ -5241,9 +5288,7 @@ router.post(
 
             // Deduct credits (bypassed for super admin testing)
             if (!isSuperAdmin) {
-              await User.findByIdAndUpdate(req.user.id, {
-                $inc: { video_credits: -creditCost },
-              });
+              await deductVideoCreditsHelper(req.user.id, creditCost, isSuperAdmin);
             }
 
             // Return the full Google URI so subsequent extensions in 30s/45s/60s chain succeed
@@ -5352,10 +5397,11 @@ router.post(
       const durationSeconds = parseInt(duration) || 5;
       const creditCost = durationSeconds * 9;
 
-      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
+      const totalAvailCredits = (user.video_credits || 0) + (user.topup_video_credits || 0);
+      if (!isSuperAdmin && totalAvailCredits < creditCost) {
         return res.status(402).json({
           success: false,
-          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${user.video_credits || 0}.`,
+          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${totalAvailCredits} (${user.video_credits || 0} monthly + ${user.topup_video_credits || 0} top-up).`,
         });
       }
 
@@ -5497,14 +5543,20 @@ router.post(
         videoDownloadResponse.headers["content-type"] || "video/mp4";
 
       // 7. Deduct credits upon success (bypassed for super admin testing)
+      let updatedUser = null;
       if (!isSuperAdmin) {
-        await User.findByIdAndUpdate(req.user.id, {
-          $inc: { video_credits: -creditCost },
-        });
+        updatedUser = await deductVideoCreditsHelper(req.user.id, creditCost, isSuperAdmin);
+      } else {
+        updatedUser = await User.findById(req.user.id);
       }
 
       // 8. Send binary video response
       res.set("Content-Type", responseContentType);
+      if (updatedUser) {
+        const totalRemaining = (updatedUser.video_credits || 0) + (updatedUser.topup_video_credits || 0);
+        res.set("x-remaining-credits", String(totalRemaining));
+      }
+      res.set("Access-Control-Expose-Headers", "x-remaining-credits");
       res.send(videoBuffer);
     } catch (error) {
       console.error("Veo 3.1 Fast Reference-to-Video Error:", error);
@@ -5627,10 +5679,11 @@ router.post(
       // Billing rate for Veo 3.1 Fast 1080p (10 credits/sec)
       const creditCost = requestedSec * 10;
 
-      if (!isSuperAdmin && (user.video_credits || 0) < creditCost) {
+      const totalAvailCredits = (user.video_credits || 0) + (user.topup_video_credits || 0);
+      if (!isSuperAdmin && totalAvailCredits < creditCost) {
         return res.status(402).json({
           success: false,
-          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${user.video_credits || 0}.`,
+          error: `Insufficient video credits. This video requires ${creditCost} credits, but you only have ${totalAvailCredits} (${user.video_credits || 0} monthly + ${user.topup_video_credits || 0} top-up).`,
         });
       }
 
@@ -6057,18 +6110,15 @@ Photorealistic, cinematic, sharp facial detail, natural human motion, realistic 
       // Deduct credits (bypassed for super admin testing)
       let updatedUser = null;
       if (!isSuperAdmin) {
-        updatedUser = await User.findByIdAndUpdate(
-          req.user.id,
-          { $inc: { video_credits: -creditCost } },
-          { new: true }
-        );
+        updatedUser = await deductVideoCreditsHelper(req.user.id, creditCost, isSuperAdmin);
       } else {
         updatedUser = await User.findById(req.user.id);
       }
 
       res.set("Content-Type", responseContentType);
       if (updatedUser) {
-        res.set("x-remaining-credits", String(updatedUser.video_credits ?? 0));
+        const totalRemaining = (updatedUser.video_credits || 0) + (updatedUser.topup_video_credits || 0);
+        res.set("x-remaining-credits", String(totalRemaining));
       }
       if (googleVideoCleanUri) {
         res.set("x-google-video-uri", googleVideoCleanUri);

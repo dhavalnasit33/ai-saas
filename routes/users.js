@@ -2,6 +2,7 @@ const express = require("express");
 const User = require("../models/User");
 const PromptHistory = require("../models/PromptHistory");
 const Payment = require("../models/Payment");
+const VideoTopupPurchase = require("../models/VideoTopupPurchase");
 const { protect, authorize, checkPermission } = require("../middleware/auth");
 const AdminUser = require("../models/AdminUser");
 const { removeChildAdminsWithTransaction } = require("../utils/adminHelper");
@@ -229,12 +230,19 @@ router.get("/:id", protect, async (req, res) => {
       },
     ]);
 
+    // Get video top-up purchases
+    const topupPurchases = await VideoTopupPurchase.find({ user_id: user._id })
+      .sort({ createdAt: -1 })
+      .lean();
+
     res.json({
       success: true,
       data: {
         user,
         usage_stats: usageStats[0] || {},
         payment_stats: paymentStats[0] || {},
+        topup_purchases: topupPurchases || [],
+        topup_video_credits: user.topup_video_credits || 0,
       },
     });
   } catch (error) {

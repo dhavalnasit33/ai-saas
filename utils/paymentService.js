@@ -1,6 +1,7 @@
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const Razorpay = require("razorpay");
 const Payment = require("../models/Payment");
+const VideoTopupPurchase = require("../models/VideoTopupPurchase");
 const User = require("../models/User");
 const Plan = require("../models/Plan");
 const emailService = require("./emailService");
@@ -343,6 +344,10 @@ class PaymentService {
         await this.handleCheckoutCompleted(event.data.object);
         break;
 
+      case "payment_intent.succeeded":
+        await this.handlePaymentIntentSucceeded(event.data.object);
+        break;
+
       case "invoice.paid":
         await this.handleInvoicePaid(event.data.object);
         break;
@@ -363,6 +368,10 @@ class PaymentService {
         await this.handleInvoicePaymentFailed(event.data.object);
         break;
 
+      case "charge.refunded":
+        await this.handleChargeRefunded(event.data.object);
+        break;
+
       default:
         console.log("⚠️ Unhandled event type:", event.type);
     }
@@ -371,6 +380,16 @@ class PaymentService {
   async handleCheckoutSessionExpired(session) {
     try {
       console.log(`🔔 Checkout session ${session.id} expired`);
+      if (session.metadata?.type === "video_topup") {
+        const topup = await VideoTopupPurchase.findOne({ stripe_session_id: session.id });
+        if (topup && topup.status === "pending") {
+          topup.status = "failed";
+          await topup.save();
+          console.log(`🔴 Video top-up purchase ${topup._id} marked as failed (expired session)`);
+        }
+        return;
+      }
+
       const payment = await Payment.findOne({ session_id: session.id });
       if (payment && payment.status === "pending") {
         payment.status = "failed";
@@ -381,6 +400,85 @@ class PaymentService {
       }
     } catch (err) {
       console.error("❌ Error handling checkout.session.expired:", err);
+    }
+  }
+
+  async handlePaymentIntentSucceeded(paymentIntent) {
+    try {
+      console.log(`🔔 Payment intent succeeded: ${paymentIntent.id}`);
+      let topupId = paymentIntent.metadata?.topup_id;
+      let userId = paymentIntent.metadata?.user_id;
+      let isVideoTopup = paymentIntent.metadata?.type === "video_topup";
+
+      // If metadata not on paymentIntent, query Stripe sessions for this payment_intent
+      if (!topupId || !userId || !isVideoTopup) {
+        try {
+          const sessions = await stripe.checkout.sessions.list({
+            payment_intent: paymentIntent.id,
+            limit: 1,
+          });
+          if (sessions.data.length > 0) {
+            const sess = sessions.data[0];
+            if (sess.metadata?.type === "video_topup") {
+              isVideoTopup = true;
+              topupId = sess.metadata?.topup_id || topupId;
+              userId = sess.metadata?.user_id || sess.client_reference_id || userId;
+              console.log(`🔗 Found associated video topup session: ${sess.id}, topupId: ${topupId}, userId: ${userId}`);
+            }
+          }
+        } catch (sessErr) {
+          console.error("Error retrieving checkout session for payment_intent:", sessErr);
+        }
+      }
+
+      // 🛑 CRITICAL GUARD: Only process if this is EXPLICITLY a video_topup payment!
+      // Subscriptions and other plans must NEVER receive topup credits!
+      if (!isVideoTopup && !topupId) {
+        console.log(`ℹ️ [PaymentIntent] ${paymentIntent.id} is not a video_topup (regular subscription/plan). Skipping topup credits.`);
+        return;
+      }
+
+      // Find topup by topupId or payment_intent
+      let topup;
+      if (topupId) {
+        topup = await VideoTopupPurchase.findById(topupId);
+      }
+      if (!topup) {
+        topup = await VideoTopupPurchase.findOne({
+          stripe_payment_intent_id: paymentIntent.id,
+        });
+      }
+
+      const creditsToAdd = parseInt(paymentIntent.metadata?.credits || "600", 10);
+
+      if (!topup && userId && isVideoTopup) {
+        topup = new VideoTopupPurchase({
+          user_id: userId,
+          stripe_payment_intent_id: paymentIntent.id,
+          amount: paymentIntent.amount ? paymentIntent.amount / 100 : 10.0,
+          currency: paymentIntent.currency ? paymentIntent.currency.toUpperCase() : "USD",
+          credits_added: creditsToAdd,
+          status: "pending",
+        });
+      }
+
+      if (topup && !topup.credits_processed) {
+        const user = await User.findById(topup.user_id || userId);
+        if (user) {
+          user.topup_video_credits = (user.topup_video_credits || 0) + (topup.credits_added || creditsToAdd);
+          await user.save();
+          console.log(`✅ [PaymentIntent] Added ${topup.credits_added || creditsToAdd} top-up credits to user ${user.email}. New balance: ${user.topup_video_credits}`);
+        }
+
+        topup.status = "success";
+        topup.credits_processed = true;
+        topup.stripe_payment_intent_id = paymentIntent.id;
+        topup.gateway_response = paymentIntent;
+        await topup.save();
+        console.log(`🎉 [PaymentIntent] Video top-up ${topup._id} fulfilled successfully.`);
+      }
+    } catch (err) {
+      console.error("❌ Error handling payment_intent.succeeded:", err);
     }
   }
 
@@ -437,6 +535,60 @@ class PaymentService {
 
   async handleCheckoutCompleted(session) {
     try {
+      // 1️⃣ Handle Video Credit Top-Up Checkout (One-time payment)
+      if (session.metadata?.type === "video_topup") {
+        console.log("🎬 Handling Video Credit Top-Up session:", session.id);
+        const topupId = session.metadata?.topup_id;
+        const userId = session.metadata?.user_id;
+        const creditsToAdd = parseInt(session.metadata?.credits || "600", 10);
+
+        let topup;
+        if (topupId) {
+          topup = await VideoTopupPurchase.findById(topupId);
+        } else {
+          topup = await VideoTopupPurchase.findOne({ stripe_session_id: session.id });
+        }
+
+        if (!topup && userId) {
+          topup = new VideoTopupPurchase({
+            user_id: userId,
+            stripe_session_id: session.id,
+            stripe_payment_intent_id: session.payment_intent,
+            amount: 10.0,
+            currency: session.currency ? session.currency.toUpperCase() : "USD",
+            credits_added: creditsToAdd,
+          });
+        }
+
+        if (!topup) {
+          return console.warn("⚠️ Top-up record could not be found or created for session:", session.id);
+        }
+
+        // Duplicate Webhook Protection (Idempotency)
+        if (topup.credits_processed || topup.status === "success") {
+          console.log(`⚠️ Video top-up ${topup._id} already processed. Skipping credit addition.`);
+          return;
+        }
+
+        if (session.payment_status === "paid") {
+          const user = await User.findById(topup.user_id);
+          if (user) {
+            user.topup_video_credits = (user.topup_video_credits || 0) + creditsToAdd;
+            await user.save();
+            console.log(`✅ Added ${creditsToAdd} top-up video credits to user ${user.email}. New balance: ${user.topup_video_credits}`);
+          }
+
+          topup.status = "success";
+          topup.credits_processed = true;
+          topup.stripe_session_id = session.id;
+          topup.stripe_payment_intent_id = session.payment_intent || topup.stripe_payment_intent_id;
+          topup.gateway_response = session;
+          await topup.save();
+          console.log(`🎉 Video top-up purchase ${topup._id} successfully fulfilled.`);
+        }
+        return;
+      }
+
       const paymentId = session.metadata?.payment_id;
       if (!paymentId)
         return console.warn("⚠️ No payment_id in session metadata");
@@ -646,7 +798,11 @@ class PaymentService {
 
     // Update user subscription state for a standard renewal
     user.subscription_status = subscription ? subscription.status : "active";
-    user.current_period_end = new Date(invoice.period_end * 1000);
+    user.current_period_end = subscription?.current_period_end
+      ? new Date(subscription.current_period_end * 1000)
+      : invoice.lines?.data?.[0]?.period?.end
+        ? new Date(invoice.lines.data[0].period.end * 1000)
+        : new Date(invoice.period_end * 1000);
     user.trial_end = null; // Trial is officially over if a renewal invoice is paid
 
     if (invoice.amount_paid > 0) {
@@ -887,9 +1043,90 @@ class PaymentService {
     }
   }
 
-  // Process refund
+  // Process Video Top-Up Refund
+  async processTopupRefund(topupId, amount = 10.0, reason = "Customer request") {
+    try {
+      const topup = await VideoTopupPurchase.findById(topupId);
+      if (!topup) {
+        throw new Error("Video top-up record not found");
+      }
+
+      if (topup.status !== "success") {
+        throw new Error("Cannot refund an unsuccessful or already refunded top-up");
+      }
+
+      let paymentIntentId = topup.stripe_payment_intent_id;
+      if (!paymentIntentId && topup.stripe_session_id) {
+        const session = await stripe.checkout.sessions.retrieve(topup.stripe_session_id);
+        paymentIntentId = session.payment_intent;
+      }
+
+      if (!paymentIntentId) {
+        throw new Error("Missing Stripe payment intent for refund");
+      }
+
+      const refund = await stripe.refunds.create({
+        payment_intent: paymentIntentId,
+        amount: Math.round((amount || topup.amount) * 100),
+        reason: "requested_by_customer",
+      });
+
+      // Deduct credits per rule (Section 14: Never make balance negative)
+      const user = await User.findById(topup.user_id);
+      let creditsDeducted = 0;
+      let adminReviewRequired = false;
+      let notes = "";
+
+      if (user) {
+        const currentTopupCredits = user.topup_video_credits || 0;
+        const creditsToDeduct = topup.credits_added || 600;
+
+        if (currentTopupCredits >= creditsToDeduct) {
+          // All credits still unused
+          user.topup_video_credits -= creditsToDeduct;
+          creditsDeducted = creditsToDeduct;
+          adminReviewRequired = false;
+          notes = `Fully deducted ${creditsToDeduct} top-up credits.`;
+        } else {
+          // Partial credits used by user; do not make balance negative
+          creditsDeducted = currentTopupCredits;
+          user.topup_video_credits = 0;
+          adminReviewRequired = true;
+          notes = `User had only ${currentTopupCredits} credits remaining out of ${creditsToDeduct}. Balance set to 0. Flagged for admin review.`;
+        }
+        await user.save();
+        console.log(`💳 Refund applied to user ${user.email}: Deducted ${creditsDeducted} credits. Admin review: ${adminReviewRequired}`);
+      }
+
+      // Update Top-Up record
+      topup.status = "refunded";
+      topup.refund_details = {
+        refund_id: refund.id,
+        refunded_at: new Date(),
+        amount_refunded: amount || topup.amount,
+        credits_deducted: creditsDeducted,
+        admin_review_required: adminReviewRequired,
+        notes: notes,
+      };
+      await topup.save();
+
+      return refund;
+    } catch (error) {
+      console.error("Video top-up refund error:", error);
+      throw error;
+    }
+  }
+
+  // Process refund (Supports both Subscription Payments and Top-Up Purchases)
   async processRefund(paymentId, amount, reason = "Customer request") {
     try {
+      // 1. Check if it's a VideoTopupPurchase
+      const topup = await VideoTopupPurchase.findById(paymentId);
+      if (topup) {
+        return await this.processTopupRefund(paymentId, amount, reason);
+      }
+
+      // 2. Otherwise handle as Subscription Payment
       const payment = await Payment.findById(paymentId);
       if (!payment) {
         throw new Error("Payment not found");
@@ -925,6 +1162,72 @@ class PaymentService {
     } catch (error) {
       console.error("Refund processing error:", error);
       throw error;
+    }
+  }
+
+  // Handle Stripe Webhook: charge.refunded
+  async handleChargeRefunded(charge) {
+    try {
+      console.log(`🔔 Charge refunded event: ${charge.id}, payment_intent: ${charge.payment_intent}`);
+      const paymentIntentId = charge.payment_intent;
+      if (!paymentIntentId) return;
+
+      // Check if this belongs to a VideoTopupPurchase
+      const topup = await VideoTopupPurchase.findOne({
+        $or: [
+          { stripe_payment_intent_id: paymentIntentId },
+          { "gateway_response.payment_intent": paymentIntentId },
+        ],
+      });
+
+      if (topup && topup.status !== "refunded") {
+        const user = await User.findById(topup.user_id);
+        let creditsDeducted = 0;
+        let adminReviewRequired = false;
+        let notes = "Refund initiated via Stripe dashboard.";
+
+        if (user) {
+          const currentTopupCredits = user.topup_video_credits || 0;
+          const creditsToDeduct = topup.credits_added || 600;
+
+          if (currentTopupCredits >= creditsToDeduct) {
+            user.topup_video_credits -= creditsToDeduct;
+            creditsDeducted = creditsToDeduct;
+            adminReviewRequired = false;
+          } else {
+            creditsDeducted = currentTopupCredits;
+            user.topup_video_credits = 0;
+            adminReviewRequired = true;
+            notes += ` User had only ${currentTopupCredits} credits left out of ${creditsToDeduct}. Balance set to 0. Flagged for admin review.`;
+          }
+          await user.save();
+        }
+
+        topup.status = "refunded";
+        topup.refund_details = {
+          refund_id: charge.refunds?.data?.[0]?.id || charge.id,
+          refunded_at: new Date(),
+          amount_refunded: (charge.amount_refunded || 0) / 100,
+          credits_deducted: creditsDeducted,
+          admin_review_required: adminReviewRequired,
+          notes: notes,
+        };
+        await topup.save();
+        console.log(`✅ Webhook processed top-up refund for record ${topup._id}`);
+        return;
+      }
+
+      // Check standard payment record
+      const payment = await Payment.findOne({ transaction_id: paymentIntentId });
+      if (payment && payment.status !== "refunded") {
+        payment.status = "refunded";
+        payment.refund_id = charge.refunds?.data?.[0]?.id || charge.id;
+        payment.refund_amount = (charge.amount_refunded || 0) / 100;
+        await payment.save();
+        console.log(`✅ Webhook processed subscription refund for payment ${payment._id}`);
+      }
+    } catch (err) {
+      console.error("❌ Error handling charge.refunded webhook:", err);
     }
   }
 
@@ -993,6 +1296,84 @@ class PaymentService {
       );
     } catch (error) {
       console.error("Payment analytics error:", error);
+      throw error;
+    }
+  }
+  // Create Stripe Checkout Session for Video Top-Up ($10 for 600 Credits)
+  async createStripeVideoTopupSession(userId, rewardfulReferralId = null) {
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      // Eligibility Check: Must have active paid subscription (Trial users not allowed)
+      const isPaidUser =
+        ["pro", "pro_max"].includes(user.plan) &&
+        user.subscription_status === "active";
+
+      if (!isPaidUser) {
+        const error = new Error("Video Credit Top-Up is only available for active paid subscribers.");
+        error.statusCode = 403;
+        throw error;
+      }
+
+      // Create a pending topup order record
+      const topup = new VideoTopupPurchase({
+        user_id: user._id,
+        amount: 10.0,
+        currency: "USD",
+        credits_added: 600,
+        stripe_price_id: process.env.STRIPE_VIDEO_TOPUP_PRICE_ID || "price_1UNoMsAasrkJ38UQdVn5oG1A",
+        stripe_product_id: process.env.STRIPE_VIDEO_TOPUP_PRODUCT_ID || "prod_VObaXBiP6ty2fq",
+        status: "pending",
+      });
+      await topup.save();
+
+      const priceId = process.env.STRIPE_VIDEO_TOPUP_PRICE_ID || "price_1UNoMsAasrkJ38UQdVn5oG1A";
+
+      // Build Stripe Session (One-time payment mode)
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+        mode: "payment",
+        customer_email: user.email,
+        client_reference_id: user._id.toString(),
+        line_items: [
+          {
+            price: priceId,
+            quantity: 1,
+          },
+        ],
+        success_url: `${process.env.CLIENT_URL || process.env.FRONTEND_URL || "https://onechatai.ai"}/payment-success?topup_session_id={CHECKOUT_SESSION_ID}&type=video_topup`,
+        cancel_url: `${process.env.CLIENT_URL || process.env.FRONTEND_URL || "https://onechatai.ai"}/payment-cancel?type=video_topup`,
+        metadata: {
+          topup_id: topup._id.toString(),
+          user_id: user._id.toString(),
+          type: "video_topup",
+          credits: "600",
+          ...(rewardfulReferralId && { referral: rewardfulReferralId }),
+        },
+        payment_intent_data: {
+          metadata: {
+            topup_id: topup._id.toString(),
+            user_id: user._id.toString(),
+            type: "video_topup",
+            credits: "600",
+            ...(rewardfulReferralId && { referral: rewardfulReferralId }),
+          },
+        },
+      });
+
+      topup.stripe_session_id = session.id;
+      await topup.save();
+
+      return {
+        session_id: session.id,
+        url: session.url,
+        topup_id: topup._id,
+      };
+    } catch (error) {
+      console.error("Create Stripe Video Topup Session error:", error);
       throw error;
     }
   }

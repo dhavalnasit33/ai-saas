@@ -1,5 +1,6 @@
 const express = require("express");
 const Payment = require("../models/Payment");
+const VideoTopupPurchase = require("../models/VideoTopupPurchase");
 const Plan = require("../models/Plan");
 const { protect, authorize, checkPermission } = require("../middleware/auth");
 const paymentService = require("../utils/paymentService");
@@ -199,6 +200,57 @@ router.post("/stripe/create-checkout-session", protect, async (req, res) => {
   }
 });
 
+// @desc    Create Stripe Checkout Session for Video Credit Top-Up ($10 = 600 credits)
+// @route   POST /api/payments/stripe/create-video-topup-session
+// @access  Private (Paid subscribers only)
+router.post("/stripe/create-video-topup-session", protect, async (req, res) => {
+  try {
+    const { rewardfulReferralId = null } = req.body;
+
+    const result = await paymentService.createStripeVideoTopupSession(
+      req.user.id,
+      rewardfulReferralId
+    );
+
+    return res.json({
+      success: true,
+      session_url: result.url,
+      session_id: result.session_id,
+      topup_id: result.topup_id,
+    });
+  } catch (error) {
+    console.error("Video Top-Up Session creation error:", error);
+    const statusCode = error.statusCode || 500;
+    res.status(statusCode).json({
+      success: false,
+      message: error.message || "Failed to create video top-up session",
+    });
+  }
+});
+
+// @desc    Get user's video top-up purchase history
+// @route   GET /api/payments/video-topup/history
+// @access  Private
+router.get("/video-topup/history", protect, async (req, res) => {
+  try {
+    const history = await VideoTopupPurchase.find({ user_id: req.user.id })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      data: history,
+      topup_video_credits: req.user.topup_video_credits || 0,
+    });
+  } catch (error) {
+    console.error("Video Top-Up history error:", error);
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch top-up history",
+    });
+  }
+});
+
 router.post("/stripe/create-portal-session", protect, async (req, res) => {
   try {
     const sessionData = await paymentService.createStripePortalSession(
@@ -289,21 +341,36 @@ router.post("/stripe/cancel-subscription", protect, async (req, res) => {
 
 router.get("/stripe/verify-session", protect, async (req, res) => {
   try {
-    const { session_id } = req.query;
-    if (!session_id)
+    const { session_id, topup_session_id } = req.query;
+    const targetSessionId = session_id || topup_session_id;
+
+    if (!targetSessionId)
       return res
         .status(400)
         .json({ success: false, message: "Session ID required" });
 
-    // Find your Payment record
-    const payment = await Payment.findOne({ session_id: session_id });
+    // 1. First check VideoTopupPurchase record
+    const topup = await VideoTopupPurchase.findOne({ stripe_session_id: targetSessionId });
+    if (topup) {
+      return res.json({
+        success: true,
+        type: "video_topup",
+        payment: {
+          status: topup.status,
+          amount: topup.amount,
+          currency: topup.currency,
+          credits_added: topup.credits_added,
+        },
+      });
+    }
+
+    // 2. Find Subscription Payment record
+    const payment = await Payment.findOne({ session_id: targetSessionId });
 
     if (!payment)
       return res
         .status(404)
         .json({ success: false, message: "Payment not found" });
-
-    const isPaid = payment.status === "success";
 
     return res.json({ success: true, payment });
   } catch (error) {

@@ -337,6 +337,10 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 0, // Free users get 0
     },
+    topup_video_credits: {
+      type: Number,
+      default: 0, // Top-up credits that never expire/reset monthly
+    },
     image_credits: {
       type: Number,
       default: 0,

@@ -60,7 +60,7 @@ const verifyGoogleToken = async (idToken) => {
 
 const handleGoogleAuth = async (req, res) => {
   try {
-    const { idToken, region, registration_attribution } = req.body;
+    const { idToken, region, interests, registration_attribution } = req.body;
 
     if (!idToken) {
       return res.status(400).json({
@@ -214,6 +214,8 @@ const handleGoogleAuth = async (req, res) => {
         roles: ["User"],
         age: 18,
         authProvider: "google",
+        interests: Array.isArray(interests) ? interests : [],
+        onboarding_completion_pct: 33,
         devices: [currentDeviceInfo],
         rdt_cid: rdtCidVal,
         rdtCid: rdtCidVal,

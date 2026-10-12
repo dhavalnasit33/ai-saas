@@ -590,7 +590,15 @@ router.post("/create-user", async (req, res) => {
 // @access  Public
 router.post("/register", signupLimiter, async (req, res) => {
   try {
-    const { firstName, lastName, email, password, region, registration_attribution, } = req.body;
+    const {
+      firstName,
+      lastName,
+      email,
+      password,
+      region,
+      interests,
+      registration_attribution,
+    } = req.body;
 
     if (!firstName || !lastName || !email || !password) {
       return res.status(400).json({
@@ -643,6 +651,8 @@ router.post("/register", signupLimiter, async (req, res) => {
       email,
       password,
       region, // <-- added this
+      interests: Array.isArray(interests) ? interests : [],
+      onboarding_completion_pct: 33,
       roles: ["User"],
       profile_picture: "",
       devices: [deviceInfo],
