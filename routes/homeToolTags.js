@@ -176,7 +176,7 @@ router.get("/list", protect, async (req, res) => {
         "convert-jpg-to-png",
       ],
       pdf: [
-        "chat-pdf-converter",
+        "chat-pdf",
         "word-to-pdf-converter",
         "pdf-to-word-converter",
         "jpg-to-pdf-converter",
@@ -457,7 +457,7 @@ router.get("/tags-by-category", protect, async (req, res) => {
         "convert-jpg-to-png",
       ],
       pdf: [
-        "chat-pdf-converter",
+        "chat-pdf",
         "word-to-pdf-converter",
         "pdf-to-word-converter",
         "jpg-to-pdf-converter",
