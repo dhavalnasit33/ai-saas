@@ -15,6 +15,7 @@ const paymentRoutes = require("./routes/payments");
 const toolRoutes = require("./routes/tools");
 const notebookRoutes = require("./routes/notebook");
 const chatPdfRoutes = require("./routes/chatPdf");
+const analyzeFilesRoutes = require("./routes/analyzeFiles");
 // const historyRoutes = require('./routes/history');
 const adminRoutes = require("./routes/admin");
 const aiProviderRoutes = require("./routes/aiProviders");
@@ -149,13 +150,19 @@ app.use("/api/webhook-receiver", require("./routes/stripeWebhook"));
 // startTrashCleanupJob();
 // startSubscriptionCron();
 // Security middleware
-app.use(helmet());
+app.use(
+  helmet({
+    frameguard: false, // Allows embedding in iframes across domains/localhost
+    contentSecurityPolicy: false, // Prevents CSP from blocking object/embed/iframe for PDFs and previews
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+  }),
+);
 app.use(
   cors({
     origin: [
       "http://localhost:3000",
       "https://onechatai.ai",
-      "http://localhost:49190",
+      "http://localhost:62520",
       "http://localhost:5173",
     ],
     credentials: true,
@@ -202,6 +209,7 @@ app.use("/api/payments", paymentRoutes);
 app.use("/api/tools", toolRoutes);
 app.use("/api/notebooks", notebookRoutes);
 app.use("/api/chat-pdf", chatPdfRoutes);
+app.use("/api/analyze-files", analyzeFilesRoutes);
 app.use("/api/stability", stabilityRoutes);
 // app.use('/api/history', historyRoutes);
 app.use("/api/admin", adminRoutes);
