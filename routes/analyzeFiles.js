@@ -7,6 +7,8 @@ const path = require("path");
 const fs = require("fs");
 const { default: OpenAI } = require("openai");
 const AnalyzeFile = require("../models/AnalyzeFile");
+const SharedAnalyzeItem = require("../models/SharedAnalyzeItem");
+const PptxGenJS = require("pptxgenjs");
 const { protect } = require("../middleware/auth");
 const {
   parseUploadedFile,
@@ -523,9 +525,9 @@ router.post("/chats/:id/message", protect, async (req, res) => {
     if (lower.includes("report")) {
       specificTaskInstruction =
         "Produce a detailed business report with Executive Summary, KPI metric highlights, analytical sections, structured findings, and actionable recommendations.";
-    } else if (lower.includes("slide")) {
+    } else if (lower.includes("slide") || lower.includes("presentation") || lower.includes("deck")) {
       specificTaskInstruction =
-        "Produce a structured presentation deck card with slide-by-slide titles, key takeaways, and metric highlights.";
+        "PRESENTATION SLIDES MODE: The user requested a slide presentation. You MUST format the response as an interactive Carousel presentation deck that displays exactly 1 slide at a time with full width. Do NOT squish multiple slides together side-by-side in one tight row. Each slide must be an independent full-width slide card with navigation arrows (Next/Prev) so the user flips through one clean slide at a time without any text clipping or overlapping.";
     } else if (lower.includes("dashboard")) {
       specificTaskInstruction =
         "Produce an interactive multi-card dashboard with top 3-4 KPI metric cards, comparative multi-series charts (BarChart/LineChart/PieChart), and key findings.";
@@ -915,6 +917,265 @@ SECURITY & SYSTEM INTEGRITY DIRECTIVES:
       } catch (_) {}
       res.end();
     }
+  }
+});
+
+
+/**
+ * 10. Share a Specific Graph / Chart / Report
+ * POST /api/analyze-files/share-item
+ */
+router.post("/share-item", protect, async (req, res) => {
+  try {
+    const userId = req.user._id || req.user.id;
+    const {
+      chatId,
+      title = "AI Generated Report",
+      description = "",
+      itemType = "chart",
+      c1Content = "",
+      chartData = null,
+      imageUrl = null,
+    } = req.body;
+
+    if (!c1Content && !chartData && !imageUrl) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide content, chart data, or an image to share.",
+      });
+    }
+
+    // Generate unique 12-char public share ID
+    const shareId = crypto.randomBytes(8).toString("hex");
+
+    const sharedItem = new SharedAnalyzeItem({
+      shareId,
+      userId,
+      chatId: chatId || null,
+      itemType,
+      title: (title || "AI Analysis Report").trim(),
+      description: (description || "").trim(),
+      c1Content: typeof c1Content === "string" ? c1Content : JSON.stringify(c1Content),
+      chartData: chartData || null,
+      imageUrl: imageUrl || null,
+      isPublic: true,
+      viewsCount: 0,
+    });
+
+    await sharedItem.save();
+
+    const frontendBaseUrl =
+      process.env.FRONTEND_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
+      "https://onechatai.ai";
+    const shareUrl = `${frontendBaseUrl.replace(/\/+$/, "")}/analyze/share/${shareId}`;
+
+    return res.status(201).json({
+      success: true,
+      shareId,
+      shareUrl,
+      item: {
+        shareId: sharedItem.shareId,
+        title: sharedItem.title,
+        itemType: sharedItem.itemType,
+        createdAt: sharedItem.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error("Error in share-item endpoint:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate share link: " + error.message,
+    });
+  }
+});
+
+/**
+ * 11. Get Publicly Shared Graph / Chart / Report (No Auth Required)
+ * GET /api/analyze-files/shared-item/:shareId
+ */
+router.get("/shared-item/:shareId", async (req, res) => {
+  try {
+    const { shareId } = req.params;
+    const item = await SharedAnalyzeItem.findOne({ shareId, isPublic: true });
+
+    if (!item) {
+      return res.status(404).json({
+        success: false,
+        message: "Shared report or chart not found or no longer available.",
+      });
+    }
+
+    // Increment views count
+    item.viewsCount = (item.viewsCount || 0) + 1;
+    await item.save();
+
+    return res.json({
+      success: true,
+      item: {
+        shareId: item.shareId,
+        title: item.title,
+        description: item.description,
+        itemType: item.itemType,
+        c1Content: item.c1Content,
+        chartData: item.chartData,
+        imageUrl: item.imageUrl,
+        viewsCount: item.viewsCount,
+        createdAt: item.createdAt,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching shared item:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch shared report.",
+    });
+  }
+});
+
+/**
+ * 12. Export Single Report / Chart / Insights as PPTX Slide
+ * POST /api/analyze-files/export-ppt
+ */
+router.post("/export-ppt", protect, async (req, res) => {
+  try {
+    const {
+      title = "AI Generated Report",
+      description = "",
+      chartData = null,
+      imageUrl = null,
+    } = req.body;
+
+    const pptx = new PptxGenJS();
+    pptx.layout = "LAYOUT_WIDE"; // 16:9
+
+    // Slide 1
+    const slide = pptx.addSlide();
+    slide.background = { color: "070914" }; // Dark theme
+
+    // Header Title
+    slide.addText(title || "AI Analysis Report", {
+      x: 0.8,
+      y: 0.6,
+      w: 11.5,
+      h: 0.8,
+      fontSize: 24,
+      bold: true,
+      color: "FFFFFF",
+      fontFace: "Arial",
+    });
+
+    // Subtitle
+    slide.addText("Generated by OneChat AI", {
+      x: 0.8,
+      y: 1.3,
+      w: 8.0,
+      h: 0.4,
+      fontSize: 12,
+      color: "7564F6",
+      fontFace: "Arial",
+    });
+
+    // Description / insights text
+    if (description && description.trim()) {
+      slide.addText(description.trim().slice(0, 1200), {
+        x: 0.8,
+        y: 1.9,
+        w: imageUrl ? 5.5 : 11.5,
+        h: imageUrl ? 4.5 : 2.2,
+        fontSize: 14,
+        color: "E2E8F0",
+        fontFace: "Arial",
+        lineSpacing: 22,
+        valign: "top",
+      });
+    }
+
+    // Chart Image (Base64 or URL)
+    if (imageUrl) {
+      try {
+        const imageX = description && description.trim() ? 6.6 : 1.2;
+        const imageW = description && description.trim() ? 5.8 : 10.5;
+
+        if (imageUrl.startsWith("data:image")) {
+          slide.addImage({
+            data: imageUrl,
+            x: imageX,
+            y: 1.9,
+            w: imageW,
+            h: 4.6,
+          });
+        } else if (imageUrl.startsWith("http")) {
+          slide.addImage({
+            path: imageUrl,
+            x: imageX,
+            y: 1.9,
+            w: imageW,
+            h: 4.6,
+          });
+        }
+      } catch (imgErr) {
+        console.warn("Could not attach image to slide:", imgErr.message);
+      }
+    } else if (chartData && Array.isArray(chartData.labels) && Array.isArray(chartData.values)) {
+      try {
+        const chartType =
+          chartData.type === "line"
+            ? pptx.ChartType.line
+            : chartData.type === "pie"
+            ? pptx.ChartType.pie
+            : pptx.ChartType.bar;
+
+        slide.addChart(
+          chartType,
+          [
+            {
+              name: chartData.title || "Data",
+              labels: chartData.labels.map(String),
+              values: chartData.values.map(Number),
+            },
+          ],
+          {
+            x: 1.0,
+            y: 2.2,
+            w: 11.0,
+            h: 4.4,
+            chartColors: ["6C56E5", "EC4899", "3B82F6", "10B981"],
+            showLegend: true,
+          }
+        );
+      } catch (chartErr) {
+        console.warn("Could not render native PPT chart:", chartErr.message);
+      }
+    }
+
+    // Footer
+    slide.addText(new Date().toLocaleDateString() + " | OneChat AI Analytics", {
+      x: 0.8,
+      y: 6.8,
+      w: 11.5,
+      h: 0.4,
+      fontSize: 10,
+      color: "64748B",
+    });
+
+    const buffer = await pptx.write({ outputType: "nodebuffer" });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${(title || 'report').replace(/[^a-zA-Z0-9]/g, '_')}.pptx"`
+    );
+    return res.send(buffer);
+  } catch (error) {
+    console.error("Error generating PPT:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to generate PPT presentation: " + error.message,
+    });
   }
 });
 

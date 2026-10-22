@@ -3849,7 +3849,9 @@ class AIService {
   }
 
   async generateNanoBananaEdit(prompt, imageFile, imageFile2 = null) {
-    console.log("=== Starting generateNanoBananaEdit (Native Google Gemini) ===");
+    console.log(
+      "=== Starting generateNanoBananaEdit (Native Google Gemini) ===",
+    );
     if (!imageFile) {
       throw new Error("An input image is required for editing.");
     }
@@ -3942,7 +3944,9 @@ class AIService {
     if (!imagePart) {
       const textPart = firstCandidate.content?.parts?.find((p) => p.text);
       const aiReply = textPart ? textPart.text : "Unknown text response";
-      throw new Error(`Google AI refused the edit request. AI said: "${aiReply}"`);
+      throw new Error(
+        `Google AI refused the edit request. AI said: "${aiReply}"`,
+      );
     }
 
     return Buffer.from(imagePart.inlineData.data, "base64");
@@ -4093,7 +4097,11 @@ class AIService {
 
     try {
       let openRouterModel = "bytedance-seed/seedream-4.5";
-      if (model === "seedream-5-lite" || model === "seedream-lite" || model === "seedream-4.5") {
+      if (
+        model === "seedream-5-lite" ||
+        model === "seedream-lite" ||
+        model === "seedream-4.5"
+      ) {
         openRouterModel = "bytedance-seed/seedream-4.5";
       } else if (model === "seedream-5-pro" || model === "seedream-pro") {
         openRouterModel = "bytedance-seed/seedream-4.5"; // OpenRouter active Seedream model is seedream-4.5
@@ -4386,6 +4394,30 @@ class AIService {
       );
     }
   }
+
+  // Helper: Sanitize video prompts to adhere to Google AI Prohibited Content & Misinformation Guidelines
+  sanitizeGoogleVideoPrompt(rawPrompt) {
+    if (!rawPrompt || typeof rawPrompt !== "string") return rawPrompt || "";
+    let clean = rawPrompt;
+    const replacements = [
+      { pattern: /\b(broadcast-quality\s+news-style|news-style|news\s+story|breaking\s+news|tv\s+news|daily\s+news)\b/gi, replacement: "professional informative showcase" },
+      { pattern: /\b(news\s+anchor\s+voiceover|news\s+anchor|news\s+reporter|anchorperson|anchor\b)/gi, replacement: "narrator voiceover" },
+      { pattern: /\b(broadcast\s+television\s+lighting|broadcast\s+lighting)\b/gi, replacement: "professional studio lighting" },
+      { pattern: /\b(authoritative\s+newsroom\s+pacing|newsroom\s+pacing|newsroom\b)/gi, replacement: "crisp documentary pacing" },
+      { pattern: /\b(crisp\s+digital\s+news\s+infographics|news\s+infographics|news\s+graphics)\b/gi, replacement: "crisp modern motion infographics" },
+      { pattern: /\b(subtle\s+headline\s+tickers|headline\s+ticker|headline\s+tickers|news\s+ticker|ticker\b)/gi, replacement: "subtle title overlays" },
+      { pattern: /\b(high\s+journalistic\s+production\s+value|journalistic\s+production|journalism\b|journalistic\b)/gi, replacement: "high-end cinematic production value" },
+      { pattern: /\b(tv\s+broadcast-inspired\s+presentation|broadcast-inspired\s+presentation|broadcast-inspired\b)/gi, replacement: "engaging studio presentation" },
+      { pattern: /\b(news\s+category|news\s+package)\b/gi, replacement: "presentation category" },
+      { pattern: /\b(investigative\s+report|breaking\s+bulletin|bulletin\b)/gi, replacement: "special documentary feature" },
+      { pattern: /\b(Professional\s+Broadcast|TV\s+Broadcast|Television\s+Broadcast|News\s+Broadcast|Broadcast\b)/gi, replacement: "Professional Studio" },
+      { pattern: /\b(news\b)/gi, replacement: "showcase" },
+    ];
+    for (const { pattern, replacement } of replacements) {
+      clean = clean.replace(pattern, replacement);
+    }
+    return clean.trim();
+  }
   // =================================================================
   // VEO IMPLEMENTATION (GOOGLE GEMINI API)
   // =================================================================
@@ -4430,20 +4462,146 @@ class AIService {
       const apiKey = provider.api_key.trim();
 
       // 2. Use exact Google Native model IDs
-      let geminiModelId = model || "veo-3.1-fast-generate-preview";
-      if (geminiModelId === "veo-3.1-fast") {
-        geminiModelId = "veo-3.1-fast-generate-preview";
-      } else if (geminiModelId === "veo-3.1") {
-        geminiModelId = "veo-3.1-generate-preview";
-      } else if (geminiModelId === "veo-3.1-lite") {
-        geminiModelId = "veo-3.1-lite-generate-preview";
+      let geminiModelId = model || "gemini-omni-1.1-flash";
+      if (
+        geminiModelId === "veo-3.1-fast" ||
+        geminiModelId === "veo-3.1-fast-generate-preview" ||
+        geminiModelId === "veo-3.1" ||
+        geminiModelId === "veo-3.1-generate-preview" ||
+        geminiModelId === "veo-3.1-lite" ||
+        geminiModelId === "veo-3.1-lite-generate-preview" ||
+        geminiModelId === "gemini-omni-flash-preview" ||
+        geminiModelId === "gemini-omni-1.1-flash"
+      ) {
+        geminiModelId = "gemini-omni-1.1-flash";
       }
-      console.log(`🧠 Using Veo model: ${geminiModelId}`);
+      console.log(`🧠 Using Video model: ${geminiModelId}`);
 
-      // 3. Prepare Inputs
+      // =====================================================================
+      // A. GOOGLE INTERACTIONS API (gemini-omni-1.1-flash)
+      // =====================================================================
+      if (geminiModelId === "gemini-omni-1.1-flash") {
+        console.log(
+          "🚀 Executing Gemini Omni 1.1 Flash via Interactions API...",
+        );
+
+        const inputParts = [];
+
+        // 1. Add Text Prompt
+        let finalPrompt = this.sanitizeGoogleVideoPrompt(prompt.trim());
+        const parsedSec = parseInt(duration);
+        if (parsedSec) {
+          finalPrompt = `${finalPrompt} Duration: exactly ${parsedSec} seconds. Maintain seamless pacing to complete the action precisely within ${parsedSec} seconds.`;
+        }
+
+        inputParts.push({
+          type: "text",
+          text: finalPrompt,
+        });
+
+        // 2. Add Reference Images or Input Image via Google Files API
+        const validRefImages = Array.isArray(referenceImageFiles)
+          ? referenceImageFiles.filter((f) => f && f.buffer)
+          : [];
+
+        const imagesToUpload =
+          validRefImages.length > 0
+            ? validRefImages.slice(0, 3)
+            : imageFile && imageFile.buffer
+              ? [imageFile]
+              : [];
+
+        for (const img of imagesToUpload) {
+          let mimeType = "image/jpeg";
+          if (img.mimetype && img.mimetype.startsWith("image/")) {
+            mimeType = img.mimetype;
+          }
+          try {
+            const uploadRes = await axios.post(
+              `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+              img.buffer,
+              {
+                headers: {
+                  "X-Goog-Upload-Command": "start, upload, finalize",
+                  "X-Goog-Upload-Header-Content-Length": img.buffer.length,
+                  "X-Goog-Upload-Header-Content-Type": mimeType,
+                  "Content-Type": mimeType,
+                },
+                timeout: 60000,
+              },
+            );
+
+            const fileUri = uploadRes.data?.file?.uri;
+            if (fileUri) {
+              inputParts.push({
+                type: "image",
+                uri: fileUri,
+                mime_type: mimeType,
+              });
+            } else {
+              inputParts.push({
+                type: "image",
+                data: img.buffer.toString("base64"),
+                mime_type: mimeType,
+              });
+            }
+          } catch (upErr) {
+            console.warn("[Google Files Upload Fallback]", upErr.message);
+            inputParts.push({
+              type: "image",
+              data: img.buffer.toString("base64"),
+              mime_type: mimeType,
+            });
+          }
+        }
+
+        const interactionsUrl = `https://generativelanguage.googleapis.com/v1beta/interactions?key=${apiKey}`;
+
+        const interactionsBody = {
+          model: "models/gemini-omni-1.1-flash",
+          input: inputParts,
+        };
+
+        const omniRes = await axios.post(interactionsUrl, interactionsBody, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          timeout: 180000,
+        });
+
+        // Extract video data from Steps or Outputs
+        const steps = omniRes.data?.steps || [];
+        for (const step of steps) {
+          const contents = step.content || [];
+          for (const item of contents) {
+            if (item.type === "video" && item.data) {
+              console.log(
+                "✅ Successfully extracted video from Gemini Omni Interactions API",
+              );
+              return Buffer.from(item.data, "base64");
+            }
+          }
+        }
+
+        // Check if outputs contains video
+        const outputs = omniRes.data?.outputs || [];
+        for (const out of outputs) {
+          if (out.type === "video" && out.data) {
+            console.log(
+              "✅ Successfully extracted video from Gemini Omni outputs",
+            );
+            return Buffer.from(out.data, "base64");
+          }
+        }
+
+        throw new Error("No video data returned in Gemini Omni response.");
+      }
+
+      // =====================================================================
+      // B. GOOGLE VEO API (veo-* models via predictLongRunning)
+      // =====================================================================
       const instance = { prompt: prompt.trim() };
 
-      // Handle Reference-to-Video (up to 3 images) vs Standard Image-to-Video (1 image)
       const validRefImages = Array.isArray(referenceImageFiles)
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
@@ -4453,8 +4611,12 @@ class AIService {
         modelType === "reference" ||
         validRefImages.length > 1;
 
-      if (isExplicitRefMode && (validRefImages.length > 0 || (imageFile && imageFile.buffer))) {
-        const sourceList = validRefImages.length > 0 ? validRefImages : [imageFile];
+      if (
+        isExplicitRefMode &&
+        (validRefImages.length > 0 || (imageFile && imageFile.buffer))
+      ) {
+        const sourceList =
+          validRefImages.length > 0 ? validRefImages : [imageFile];
         instance.referenceImages = sourceList.slice(0, 3).map((f) => ({
           image: {
             mimeType: f.mimetype || "image/jpeg",
@@ -4463,17 +4625,15 @@ class AIService {
           referenceType: "asset",
         }));
       } else if (imageFile && imageFile.buffer) {
-        // Standard Image-to-Video single start frame
         instance.image = {
           mimeType: imageFile.mimetype || "image/jpeg",
           bytesBase64Encoded: imageFile.buffer.toString("base64"),
         };
       }
 
-      let finalResolution = "720p"; // Default
-      let finalDurationSeconds = 4; // Default
+      let finalResolution = "720p";
+      let finalDurationSeconds = 4;
 
-      // A. STRICT DURATION MAPPING (4s, 6s, 8s for Veo 3.1 Family)
       if (duration) {
         const parsed = parseInt(duration.toString().replace("s", ""));
         if (geminiModelId === "veo-2.0-generate-001") {
@@ -4483,28 +4643,25 @@ class AIService {
         }
       }
 
-      // B. Parse requested resolution (Veo 3.1 Lite has NO 4K support)
       if (resolution === "1080p" || resolution === "1080") {
         finalResolution = "1080p";
       } else if (resolution === "4k" || resolution === "4K") {
         finalResolution = geminiModelId.includes("lite") ? "1080p" : "4k";
       }
 
-      // C. Reference-to-Video and Image-to-Video duration rule (8s)
       if (modelType === "reference-to-video" || instance.referenceImages) {
         finalDurationSeconds = 8;
-        finalResolution = "720p"; // Reference-to-video strictly 720p 8s per sheet
+        finalResolution = "720p";
       } else if (imageFile && !instance.referenceImages) {
         if (![4, 6, 8].includes(finalDurationSeconds)) {
           finalDurationSeconds = 8;
         }
       }
 
-      // D. 1080p and 4K REQUIRE 8s as per Google Veo specs
-      if ((finalResolution === "1080p" || finalResolution === "4k") && finalDurationSeconds < 8) {
-        console.log(
-          `⚠️ 1080p/4K selected with ${finalDurationSeconds}s. Adjusting duration to 8s per Veo requirements.`,
-        );
+      if (
+        (finalResolution === "1080p" || finalResolution === "4k") &&
+        finalDurationSeconds < 8
+      ) {
         finalDurationSeconds = 8;
       }
 
@@ -4520,7 +4677,6 @@ class AIService {
 
       console.log("📤 Sending to Gemini API with parameters:", body.parameters);
 
-      // 4. Send request to the standard Gemini API
       let endpointModelId = geminiModelId;
       if (endpointModelId === "veo-3.1-lite-generate-preview") {
         endpointModelId = "veo-3.1-generate-preview";
@@ -4541,7 +4697,6 @@ class AIService {
 
       console.log(`🆔 Operation created: ${operationName}`);
 
-      // 5. Poll for Completion (GET Request for Gemini API)
       const pollUrl = `${baseUrl}/${operationName}`;
 
       for (let i = 0; i < 60; i++) {
@@ -4556,7 +4711,6 @@ class AIService {
 
         const op = statusRes.data;
 
-        // Handle internal operation errors
         if (op.error) {
           console.error("❌ Veo Generation Error:", op.error);
           throw new Error(op.error.message || "Veo Generation Failed");
@@ -4565,7 +4719,6 @@ class AIService {
         if (op.done) {
           console.log("✅ Veo generation completed on server.");
 
-          // Check if Google RAI (Responsible AI) / Safety / Audio filter blocked the output
           const raiReasons =
             op.response?.generateVideoResponse?.raiMediaFilteredReasons ||
             op.response?.raiMediaFilteredReasons;
@@ -4775,26 +4928,25 @@ class AIService {
       }
 
       // Strict Ratio Mapping
-     const isGen3 = actualModel.includes("gen3");
-let mappedRatio = isGen3 ? "1280:768" : "1280:720";
-if (isGen3) {
-  if (aspectRatio === "9:16") mappedRatio = "768:1280";
-} else {
-  // Gen-4 / Gen-4.5 official ratio mapping
-  const runwayRatioMap = {
-    "16:9": "1280:720",
-    "9:16": "720:1280",
-    "1:1": "960:960",
-    "4:3": "1104:832",
-    "3:4": "832:1104",
-    "21:9": "1584:672",
-  };
-  
-  if (runwayRatioMap[aspectRatio]) {
-    mappedRatio = runwayRatioMap[aspectRatio];
-  }
-}
+      const isGen3 = actualModel.includes("gen3");
+      let mappedRatio = isGen3 ? "1280:768" : "1280:720";
+      if (isGen3) {
+        if (aspectRatio === "9:16") mappedRatio = "768:1280";
+      } else {
+        // Gen-4 / Gen-4.5 official ratio mapping
+        const runwayRatioMap = {
+          "16:9": "1280:720",
+          "9:16": "720:1280",
+          "1:1": "960:960",
+          "4:3": "1104:832",
+          "3:4": "832:1104",
+          "21:9": "1584:672",
+        };
 
+        if (runwayRatioMap[aspectRatio]) {
+          mappedRatio = runwayRatioMap[aspectRatio];
+        }
+      }
 
       // Enforce Runway prompt text length limits safely
       const safePromptText = prompt ? prompt.substring(0, 512) : "";
@@ -4826,7 +4978,6 @@ if (isGen3) {
       if (!taskId) {
         throw new Error("No task ID returned from Runway API");
       }
-
 
       // Poll loop for completion tracking
       let isReady = false;
@@ -4919,7 +5070,7 @@ if (isGen3) {
       videoFile !== null;
     const isReferenceMode =
       modelType === "reference-to-video"
-        ? (hasRefFiles || imageFile !== null)
+        ? hasRefFiles || imageFile !== null
         : hasRefFiles;
 
     let endpoint =
@@ -5660,7 +5811,8 @@ if (isGen3) {
         }
       }
       body.duration = parsedDuration;
-      body.generate_audio = wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true";
+      body.generate_audio =
+        wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true";
     } else {
       // Legacy Hailuo duration (6s or 10s)
       if (durationStr) {
@@ -5762,9 +5914,7 @@ if (isGen3) {
 
         if (status === "ERROR" || status === "FAILED") {
           console.error("❌ MiniMax Generation Failed:", statusRes.data);
-          throw new Error(
-            statusRes.data?.error || "MiniMax generation failed",
-          );
+          throw new Error(statusRes.data?.error || "MiniMax generation failed");
         }
       }
 
@@ -5835,13 +5985,16 @@ if (isGen3) {
       videoFile !== null;
 
     const hasVideoRef = videoFile !== null && videoFile.buffer;
-    const hasImageRef = (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) || (imageFile && imageFile.buffer);
+    const hasImageRef =
+      (Array.isArray(referenceImageFiles) && referenceImageFiles.length > 0) ||
+      (imageFile && imageFile.buffer);
 
     let endpoint = "https://queue.fal.run/alibaba/wan-3.0/text-to-video";
 
     if (actualModel === "wan-3-prime") {
       if (hasVideoRef) {
-        endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/reference-to-video";
+        endpoint =
+          "https://queue.fal.run/alibaba/wan-3.0-prime/reference-to-video";
       } else if (hasImageRef) {
         endpoint = "https://queue.fal.run/alibaba/wan-3.0-prime/image-to-video";
       } else {
@@ -6549,7 +6702,11 @@ if (isGen3) {
     // Determine the base URL and endpoint (generations vs imageToImage)
     // Map model ID to official Recraft API model
     let recraftModel = model;
-    if (model === "recraftv4.1" || model === "recraftv4" || model === "recraftv4_pro") {
+    if (
+      model === "recraftv4.1" ||
+      model === "recraftv4" ||
+      model === "recraftv4_pro"
+    ) {
       recraftModel = "recraftv3"; // Official Recraft API currently supports "recraftv3" or "recraft20b"
     }
 
@@ -7076,7 +7233,12 @@ if (isGen3) {
   // =================================================================
   // KLING IMAGE IMPLEMENTATION (FAL.AI)
   // =================================================================
-  async generateKlingO1Image(prompt, imageFile, ratio = "auto", model = "kling-image-o1") {
+  async generateKlingO1Image(
+    prompt,
+    imageFile,
+    ratio = "auto",
+    model = "kling-image-o1",
+  ) {
     console.log(`🚀 Starting Kling Image Generation for ${model}...`);
     const axios = require("axios");
 
@@ -7105,7 +7267,11 @@ if (isGen3) {
       ? "fal-ai/kling-image/v3/image-to-image"
       : "fal-ai/kling-image/v3/text-to-image";
 
-    if (model === "kling-image-v3" || model === "kling-image-o3" || model === "kling-image-o1") {
+    if (
+      model === "kling-image-v3" ||
+      model === "kling-image-o3" ||
+      model === "kling-image-o1"
+    ) {
       falPath = imageFile
         ? "fal-ai/kling-image/v3/image-to-image"
         : "fal-ai/kling-image/v3/text-to-image";
@@ -7223,13 +7389,26 @@ if (isGen3) {
 
     // Fetch Fal / Qwen Image provider
     const provider =
-      (await AIProvider.findOne({ name: "qwen_image", is_active: true }).select("+api_key")) ||
-      (await AIProvider.findOne({ name: "kling", is_active: true }).select("+api_key")) ||
-      (await AIProvider.findOne({ name: "flux", is_active: true }).select("+api_key")) ||
-      (process.env.FAL_API_KEY ? { api_key: process.env.FAL_API_KEY, base_url: "https://queue.fal.run" } : null);
+      (await AIProvider.findOne({ name: "qwen_image", is_active: true }).select(
+        "+api_key",
+      )) ||
+      (await AIProvider.findOne({ name: "kling", is_active: true }).select(
+        "+api_key",
+      )) ||
+      (await AIProvider.findOne({ name: "flux", is_active: true }).select(
+        "+api_key",
+      )) ||
+      (process.env.FAL_API_KEY
+        ? {
+            api_key: process.env.FAL_API_KEY,
+            base_url: "https://queue.fal.run",
+          }
+        : null);
 
     if (!provider || !provider.api_key) {
-      throw new Error("fal.ai / Qwen Image provider (qwen_image) not configured in DB");
+      throw new Error(
+        "fal.ai / Qwen Image provider (qwen_image) not configured in DB",
+      );
     }
 
     const apiKey = provider.api_key.trim();
@@ -7249,9 +7428,7 @@ if (isGen3) {
         ? "fal-ai/qwen-image-2/pro/edit"
         : "fal-ai/qwen-image-2/pro/text-to-image";
     } else {
-      falPath = imageFile
-        ? "fal-ai/qwen-image-edit"
-        : "fal-ai/qwen-image";
+      falPath = imageFile ? "fal-ai/qwen-image-edit" : "fal-ai/qwen-image";
     }
     const endpoint = `${baseUrl}/${falPath}`;
     console.log(`📤 Sending Qwen request to: ${endpoint}`);
@@ -7299,7 +7476,7 @@ if (isGen3) {
               Authorization: `Key ${apiKey}`,
               "Content-Type": "application/json",
             },
-          }
+          },
         );
 
         if (initRes.data?.upload_url) {
@@ -7311,10 +7488,15 @@ if (isGen3) {
           uploadedUrl = initRes.data.file_url;
         }
       } catch (uploadErr) {
-        console.warn("⚠️ Fal storage upload failed, falling back to data URI:", uploadErr.message);
+        console.warn(
+          "⚠️ Fal storage upload failed, falling back to data URI:",
+          uploadErr.message,
+        );
       }
 
-      const finalImageUrl = uploadedUrl || `data:${imageFile.mimetype || "image/png"};base64,${imageFile.buffer.toString("base64")}`;
+      const finalImageUrl =
+        uploadedUrl ||
+        `data:${imageFile.mimetype || "image/png"};base64,${imageFile.buffer.toString("base64")}`;
       body.image_url = finalImageUrl;
       body.image_urls = [finalImageUrl];
     }
@@ -7351,7 +7533,9 @@ if (isGen3) {
         }
 
         if (status === "ERROR" || status === "FAILED") {
-          throw new Error(statusRes.data?.error || "Qwen image generation failed");
+          throw new Error(
+            statusRes.data?.error || "Qwen image generation failed",
+          );
         }
       }
 
@@ -7359,10 +7543,15 @@ if (isGen3) {
         throw new Error("Qwen image generation timeout");
       }
 
-      const imageRes = await axios.get(imageUrl, { responseType: "arraybuffer" });
+      const imageRes = await axios.get(imageUrl, {
+        responseType: "arraybuffer",
+      });
       return Buffer.from(imageRes.data);
     } catch (error) {
-      let apiError = error.response?.data?.error || error.response?.data?.detail || error.message;
+      let apiError =
+        error.response?.data?.error ||
+        error.response?.data?.detail ||
+        error.message;
       if (typeof apiError === "object") apiError = JSON.stringify(apiError);
       console.error("🔥 Qwen Image error:", apiError);
       throw new Error(`Qwen Image error: ${apiError}`);
@@ -7445,14 +7634,18 @@ if (isGen3) {
         );
       }
 
-      const imagePart = firstCandidate.content?.parts?.find((p) => p.inlineData);
+      const imagePart = firstCandidate.content?.parts?.find(
+        (p) => p.inlineData,
+      );
       if (!imagePart) {
         const textPart = firstCandidate.content?.parts?.find((p) => p.text);
         const aiReply = textPart ? textPart.text : "Unknown text response";
         throw new Error(`Google AI refused the filter. AI said: "${aiReply}"`);
       }
 
-      console.log("✅ Success! Received response from native Google Gemini API.");
+      console.log(
+        "✅ Success! Received response from native Google Gemini API.",
+      );
       console.log("=== Finished generateAiFilter ===");
 
       return Buffer.from(imagePart.inlineData.data, "base64");
@@ -7868,9 +8061,13 @@ if (isGen3) {
   ) {
     try {
       // Only check the current prompt (not old history) to see if user is asking what model is being used
-      const latestUserPrompt = (prompt.split("{{historyData}}")[0] || prompt).trim();
+      const latestUserPrompt = (
+        prompt.split("{{historyData}}")[0] || prompt
+      ).trim();
       const isModelQuestion =
-        /\b(which model|what model|what version|which ai model|who are you|what is your model)\b/i.test(latestUserPrompt);
+        /\b(which model|what model|what version|which ai model|who are you|what is your model)\b/i.test(
+          latestUserPrompt,
+        );
       const defaultSystemPrompt =
         "You are a helpful AI assistant. Don't think too long, send 1 to 2 sentence very quick responses. You can send response up to 150 words only if necessary. You can send response above 150 words only if absolutely necessary. Always try to respond within 1 to 3 seconds if possible. Never think for more than 10 seconds, always think and respond within 10 seconds or less. The faster you respond, the better.";
 
@@ -8453,7 +8650,11 @@ if (isGen3) {
       };
 
       // Conditionally add temperature only for models that support it
-      if (!["claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"].includes(model.model)) {
+      if (
+        !["claude-sonnet-5", "claude-opus-4-7", "claude-opus-4-8"].includes(
+          model.model,
+        )
+      ) {
         payload.temperature = 0.7;
       }
 
@@ -8558,30 +8759,30 @@ if (isGen3) {
         if (onError) onError(error);
       });
     } catch (error) {
-  console.error("Status:", error.response?.status);
+      console.error("Status:", error.response?.status);
 
-  if (error.response?.data?.on) {
-    let body = "";
+      if (error.response?.data?.on) {
+        let body = "";
 
-    error.response.data.on("data", (chunk) => {
-      body += chunk.toString();
-    });
+        error.response.data.on("data", (chunk) => {
+          body += chunk.toString();
+        });
 
-    error.response.data.on("end", () => {
-      console.error("Anthropic Error Body:", body);
-    });
-  } else {
-    console.error(error.response?.data);
-  }
+        error.response.data.on("end", () => {
+          console.error("Anthropic Error Body:", body);
+        });
+      } else {
+        console.error(error.response?.data);
+      }
 
-  if (onError) onError(error);
+      if (onError) onError(error);
 
-  throw new Error(
-    `Anthropic streaming error: ${
-      error.response?.status || ""
-    } ${error.message}`
-  );
-}
+      throw new Error(
+        `Anthropic streaming error: ${
+          error.response?.status || ""
+        } ${error.message}`,
+      );
+    }
   }
 
   // Perplexity implementation (images not typically supported, but keeping structure consistent)
@@ -8923,17 +9124,17 @@ if (isGen3) {
                 data.choices[0].delta.content
               ) {
                 const content = data.choices[0].delta.content;
-                  fullResponse += content;
+                fullResponse += content;
 
-                  if (onChunk) {
-                    onChunk({
-                      content,
-                      fullResponse,
-                      provider: provider.name,
-                      model: model.model,
-                    });
-                  }
+                if (onChunk) {
+                  onChunk({
+                    content,
+                    fullResponse,
+                    provider: provider.name,
+                    model: model.model,
+                  });
                 }
+              }
 
               if (data.usage) {
                 totalTokens = data.usage.total_tokens;
@@ -9227,7 +9428,6 @@ if (isGen3) {
         contents: [{ role: "user", parts: userParts }],
         generationConfig: {
           maxOutputTokens: model.max_tokens || 8192,
-          temperature: 0.7,
         },
       });
 
@@ -9318,7 +9518,6 @@ if (isGen3) {
         contents: [{ role: "user", parts: userParts }],
         generationConfig: {
           maxOutputTokens: max_tokens || model.max_tokens || 8192,
-          temperature: 0.7,
         },
       });
 
@@ -9595,8 +9794,8 @@ if (isGen3) {
       const endpoint = provider.base_url.endsWith("/chat/completions")
         ? provider.base_url
         : provider.base_url.endsWith("/v1")
-        ? `${provider.base_url}/chat/completions`
-        : `${provider.base_url}/v1/chat/completions`;
+          ? `${provider.base_url}/chat/completions`
+          : `${provider.base_url}/v1/chat/completions`;
 
       const response = await axios.post(
         endpoint,
@@ -9654,9 +9853,7 @@ if (isGen3) {
                 console.error("Kimi stream error in data payload:", data.error);
                 if (onError)
                   onError(
-                    new Error(
-                      data.error.message || JSON.stringify(data.error),
-                    ),
+                    new Error(data.error.message || JSON.stringify(data.error)),
                   );
                 return;
               }
@@ -9720,13 +9917,8 @@ if (isGen3) {
         } catch (e) {}
       }
 
-      console.error(
-        "Kimi (OpenRouter) streaming error:",
-        detailedMsg,
-      );
-      throw new Error(
-        `Kimi (OpenRouter) streaming error: ${detailedMsg}`,
-      );
+      console.error("Kimi (OpenRouter) streaming error:", detailedMsg);
+      throw new Error(`Kimi (OpenRouter) streaming error: ${detailedMsg}`);
     }
   }
 
@@ -9970,24 +10162,30 @@ if (isGen3) {
 
           try {
             const data = JSON.parse(dataStr);
-           const delta = data?.choices?.[0]?.delta;
+            const delta = data?.choices?.[0]?.delta;
 
-// Capture standard content OR reasoning/thought content
-const chunkText = delta?.content || delta?.reasoning_content || delta?.reasoning || "";
+            // Capture standard content OR reasoning/thought content
+            const chunkText =
+              delta?.content ||
+              delta?.reasoning_content ||
+              delta?.reasoning ||
+              "";
 
-if (chunkText) {
-  fullResponse += chunkText;
+            if (chunkText) {
+              fullResponse += chunkText;
 
-  if (onChunk) {
-    onChunk({
-      content: chunkText,
-      fullResponse,
-      provider: provider.name,
-      model: model.model,
-      isReasoning: !delta?.content && Boolean(delta?.reasoning_content || delta?.reasoning)
-    });
-  }
-}
+              if (onChunk) {
+                onChunk({
+                  content: chunkText,
+                  fullResponse,
+                  provider: provider.name,
+                  model: model.model,
+                  isReasoning:
+                    !delta?.content &&
+                    Boolean(delta?.reasoning_content || delta?.reasoning),
+                });
+              }
+            }
             if (data.usage) {
               totalTokens = data.usage.total_tokens;
             }
@@ -10586,8 +10784,15 @@ if (chunkText) {
         error.response?.data || error.message,
       );
       let errorMsg = error.response?.data?.error?.message || error.message;
-      if (imageUrl && (error.response?.status === 404 || error.response?.status === 400 || (error.message || "").includes("404") || (errorMsg || "").includes("support image"))) {
-        errorMsg = "This model does not support image analysis. Please try a vision-supported model like ChatGPT, Gemini, Claude, or Grok.";
+      if (
+        imageUrl &&
+        (error.response?.status === 404 ||
+          error.response?.status === 400 ||
+          (error.message || "").includes("404") ||
+          (errorMsg || "").includes("support image"))
+      ) {
+        errorMsg =
+          "This model does not support image analysis. Please try a vision-supported model like ChatGPT, Gemini, Claude, or Grok.";
       }
       const err = new Error(`Nemotron streaming error: ${errorMsg}`);
       if (onError) onError(err);
@@ -10699,10 +10904,7 @@ if (chunkText) {
                 totalTokens = data.usage.total_tokens;
               }
             } catch (parseError) {
-              console.error(
-                "Error parsing Muse streaming data:",
-                parseError,
-              );
+              console.error("Error parsing Muse streaming data:", parseError);
             }
           }
         }

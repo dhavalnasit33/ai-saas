@@ -230,7 +230,7 @@ async function fetchModelData(modelName, category, searchQuery = "") {
             "Generate Image Seedream": "Seedream",
             "Generate Image Recraft": "Recraft",
             "Generate Image Ideogram": "Ideogram",
-            "Generate Image Kling":"Kling Image",
+            "Generate Image Kling": "Kling Image",
             "Generate Image krea": "Krea",
             "Generate Image Qwen": "Qwen Image",
             // "Generate Video Sora": "Sora",
@@ -268,6 +268,7 @@ async function fetchModelData(modelName, category, searchQuery = "") {
             "Logo Generator": "Logo Maker",
             "Multi-Chat": "Compare AI Chat Models",
             "Generate AI Videos": "Compare AI Video Models",
+            "Web Search": "AI Web Search",
           };
 
           // This ensures the rename happens regardless of the model type!
@@ -676,11 +677,12 @@ router.get("/bookmarks", protect, async (req, res) => {
         description: "Max fidelity vibrant GPT Image 2.5 Sunburst model",
         category: "image",
       },
-      "nanobanana": {
+      nanobanana: {
         title: "Nano Banana",
         slug: "nanobanana",
         tab_image: "assets/landing-page/section-2-gemini.png",
-        short_description: "Google's Nano Banana high quality image generation model",
+        short_description:
+          "Google's Nano Banana high quality image generation model",
         description: "Google's Nano Banana high quality image generation model",
         category: "image",
       },
@@ -688,7 +690,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Nano Banana Pro",
         slug: "nano-pro",
         tab_image: "assets/landing-page/section-2-gemini.png",
-        short_description: "Professional grade image generation with Nano Banana Pro",
+        short_description:
+          "Professional grade image generation with Nano Banana Pro",
         description: "Professional grade image generation with Nano Banana Pro",
         category: "image",
       },
@@ -720,7 +723,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Flux 2 Flex",
         slug: "flux-2-flex",
         tab_image: "assets/landing-page/section-2-flux.png",
-        short_description: "Flexible and fast visual generation with Flux 2 Flex",
+        short_description:
+          "Flexible and fast visual generation with Flux 2 Flex",
         description: "Flexible and fast visual generation with Flux 2 Flex",
         category: "image",
       },
@@ -728,11 +732,12 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Flux 2 Max",
         slug: "flux-2-max",
         tab_image: "assets/landing-page/section-2-flux.png",
-        short_description: "Maximum precision visual generation with Flux 2 Max",
+        short_description:
+          "Maximum precision visual generation with Flux 2 Max",
         description: "Maximum precision visual generation with Flux 2 Max",
         category: "image",
       },
-      "core": {
+      core: {
         title: "Stable Diffusion 3.5",
         slug: "core",
         tab_image: "assets/landing-page/section-2-stable-diffusion.png",
@@ -744,19 +749,21 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Krea",
         slug: "krea-2",
         tab_image: "assets/images/krea.png",
-        short_description: "High quality real-time AI image generation with Krea",
+        short_description:
+          "High quality real-time AI image generation with Krea",
         description: "High quality real-time AI image generation with Krea",
         category: "image",
       },
-      "V_2": {
+      V_2: {
         title: "Ideogram V2",
         slug: "V_2",
         tab_image: "assets/landing-page/section-2-ideogram.png",
-        short_description: "Ideogram V2 graphic design and text-in-image rendering",
+        short_description:
+          "Ideogram V2 graphic design and text-in-image rendering",
         description: "Ideogram V2 graphic design and text-in-image rendering",
         category: "image",
       },
-      "V_2_TURBO": {
+      V_2_TURBO: {
         title: "Ideogram V2 Turbo",
         slug: "V_2_TURBO",
         tab_image: "assets/landing-page/section-2-ideogram.png",
@@ -764,11 +771,12 @@ router.get("/bookmarks", protect, async (req, res) => {
         description: "Ultra-fast Ideogram V2 Turbo image generation",
         category: "image",
       },
-      "V_3": {
+      V_3: {
         title: "Ideogram V3",
         slug: "V_3",
         tab_image: "assets/landing-page/section-2-ideogram.png",
-        short_description: "Ideogram V3 next-generation typography & composition",
+        short_description:
+          "Ideogram V3 next-generation typography & composition",
         description: "Ideogram V3 next-generation typography & composition",
         category: "image",
       },
@@ -776,11 +784,12 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Ideogram 4",
         slug: "ideogram-v4",
         tab_image: "assets/landing-page/section-2-ideogram.png",
-        short_description: "Ideogram 4 state-of-the-art text design and realism",
+        short_description:
+          "Ideogram 4 state-of-the-art text design and realism",
         description: "Ideogram 4 state-of-the-art text design and realism",
         category: "image",
       },
-      "V_3_TURBO": {
+      V_3_TURBO: {
         title: "Ideogram V3 Turbo",
         slug: "V_3_TURBO",
         tab_image: "assets/landing-page/section-2-ideogram.png",
@@ -788,7 +797,7 @@ router.get("/bookmarks", protect, async (req, res) => {
         description: "Lightning-fast Ideogram V3 Turbo generation",
         category: "image",
       },
-      "V_3_QUALITY": {
+      V_3_QUALITY: {
         title: "Ideogram V3 Quality",
         slug: "V_3_QUALITY",
         tab_image: "assets/landing-page/section-2-ideogram.png",
@@ -796,19 +805,21 @@ router.get("/bookmarks", protect, async (req, res) => {
         description: "Maximum quality Ideogram V3 image generation",
         category: "image",
       },
-      "recraftv3": {
+      recraftv3: {
         title: "Recraft V3",
         slug: "recraftv3",
         tab_image: "assets/landing-page/section-2-recraft.png",
-        short_description: "Vector & photorealistic design creation with Recraft V3",
+        short_description:
+          "Vector & photorealistic design creation with Recraft V3",
         description: "Vector & photorealistic design creation with Recraft V3",
         category: "image",
       },
-      "recraftv4": {
+      recraftv4: {
         title: "Recraft V4",
         slug: "recraftv4",
         tab_image: "assets/landing-page/section-2-recraft.png",
-        short_description: "Next-gen graphic design & illustrations with Recraft V4",
+        short_description:
+          "Next-gen graphic design & illustrations with Recraft V4",
         description: "Next-gen graphic design & illustrations with Recraft V4",
         category: "image",
       },
@@ -820,7 +831,7 @@ router.get("/bookmarks", protect, async (req, res) => {
         description: "Refined graphic precision with Recraft V4.1",
         category: "image",
       },
-      "recraftv4_pro": {
+      recraftv4_pro: {
         title: "Recraft V4 Pro",
         slug: "recraftv4_pro",
         tab_image: "assets/landing-page/section-2-recraft.png",
@@ -828,7 +839,7 @@ router.get("/bookmarks", protect, async (req, res) => {
         description: "Pro-tier design rendering with Recraft V4 Pro",
         category: "image",
       },
-      "seedream": {
+      seedream: {
         title: "Seedream 4.5",
         slug: "seedream",
         tab_image: "assets/landing-page/section-2-seedream.png",
@@ -872,7 +883,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Kling 01 Image",
         slug: "kling-image-o1",
         tab_image: "assets/images/kling.png",
-        short_description: "Kuaishou Kling 01 Image model for high fidelity imagery",
+        short_description:
+          "Kuaishou Kling 01 Image model for high fidelity imagery",
         description: "Kuaishou Kling 01 Image model for high fidelity imagery",
         category: "image",
       },
@@ -910,21 +922,14 @@ router.get("/bookmarks", protect, async (req, res) => {
       //   category: "video",
       //   custom_url: "/generate-ai-videos",
       // },
-      "veo-3.1-generate-preview": {
-        title: "Veo 3.1",
-        slug: "veo-3.1-generate-preview",
+      "gemini-omni-1.1-flash": {
+        title: "Gemini Omni 1.1 Flash",
+        slug: "gemini-omni-1.1-flash",
         tab_image: "assets/images/Veo.png",
-        short_description: "Google DeepMind's Veo 3.1 ultra-realistic video synthesis",
-        description: "Google DeepMind's Veo 3.1 ultra-realistic video synthesis",
-        category: "video",
-        custom_url: "/generate-ai-videos",
-      },
-      "veo-3.1-fast-generate-preview": {
-        title: "Veo 3.1 Fast",
-        slug: "veo-3.1-fast-generate-preview",
-        tab_image: "assets/images/Veo.png",
-        short_description: "Fast high-fidelity video generation with Veo 3.1 Fast",
-        description: "Fast high-fidelity video generation with Veo 3.1 Fast",
+        short_description:
+          "Google's next-gen multimodal video generation with Gemini Omni 1.1 Flash",
+        description:
+          "Google's next-gen multimodal video generation with Gemini Omni 1.1 Flash",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -932,7 +937,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Runway Gen 4.5",
         slug: "gen4.5",
         tab_image: "assets/images/Runway.png",
-        short_description: "Cinematic camera control and motion with Runway Gen 4.5",
+        short_description:
+          "Cinematic camera control and motion with Runway Gen 4.5",
         description: "Cinematic camera control and motion with Runway Gen 4.5",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -941,18 +947,22 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Kling 2.5 Turbo",
         slug: "kling-v2-5-turbo",
         tab_image: "assets/images/kling.png",
-        short_description: "High speed cinematic motion and audio with Kling 2.5 Turbo",
-        description: "High speed cinematic motion and audio with Kling 2.5 Turbo",
+        short_description:
+          "High speed cinematic motion and audio with Kling 2.5 Turbo",
+        description:
+          "High speed cinematic motion and audio with Kling 2.5 Turbo",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
-      
+
       "Pika v2.2": {
         title: "Pika 2.2",
         slug: "Pika v2.2",
         tab_image: "assets/images/pika.png",
-        short_description: "Creative camera moves and dynamic video effects with Pika 2.2",
-        description: "Creative camera moves and dynamic video effects with Pika 2.2",
+        short_description:
+          "Creative camera moves and dynamic video effects with Pika 2.2",
+        description:
+          "Creative camera moves and dynamic video effects with Pika 2.2",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -960,8 +970,10 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Pika 2.1",
         slug: "Pika v2.1",
         tab_image: "assets/images/pika.png",
-        short_description: "Creative camera moves and dynamic video effects with Pika 2.1",
-        description: "Creative camera moves and dynamic video effects with Pika 2.1",
+        short_description:
+          "Creative camera moves and dynamic video effects with Pika 2.1",
+        description:
+          "Creative camera moves and dynamic video effects with Pika 2.1",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -969,8 +981,10 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Seedance 2.0",
         slug: "seedance-2.0",
         tab_image: "assets/icon/seedance_logo.png",
-        short_description: "Audio-synced dance and realistic video generation with Seedance 2.0",
-        description: "Audio-synced dance and realistic video generation with Seedance 2.0",
+        short_description:
+          "Audio-synced dance and realistic video generation with Seedance 2.0",
+        description:
+          "Audio-synced dance and realistic video generation with Seedance 2.0",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -978,8 +992,10 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Seedance 2.0 Fast",
         slug: "seedance-2.0-fast",
         tab_image: "assets/icon/seedance_logo.png",
-        short_description: "Lightning-fast audio-reactive video rendering with Seedance 2.0 Fast",
-        description: "Lightning-fast audio-reactive video rendering with Seedance 2.0 Fast",
+        short_description:
+          "Lightning-fast audio-reactive video rendering with Seedance 2.0 Fast",
+        description:
+          "Lightning-fast audio-reactive video rendering with Seedance 2.0 Fast",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -987,8 +1003,10 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "MiniMax Hailuo 02 Std",
         slug: "minimax-hailuo-02-standard",
         tab_image: "assets/images/minimax-short.png",
-        short_description: "Expressive characters and fluid movement with MiniMax Hailuo 02",
-        description: "Expressive characters and fluid movement with MiniMax Hailuo 02",
+        short_description:
+          "Expressive characters and fluid movement with MiniMax Hailuo 02",
+        description:
+          "Expressive characters and fluid movement with MiniMax Hailuo 02",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -996,7 +1014,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "MiniMax Hailuo 02 Pro",
         slug: "minimax-hailuo-02-pro",
         tab_image: "assets/images/minimax-short.png",
-        short_description: "High quality cinematic motion with MiniMax Hailuo 02 Pro",
+        short_description:
+          "High quality cinematic motion with MiniMax Hailuo 02 Pro",
         description: "High quality cinematic motion with MiniMax Hailuo 02 Pro",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1014,7 +1033,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "MiniMax Hailuo 2.3 Pro",
         slug: "minimax-hailuo-2.3-pro",
         tab_image: "assets/images/minimax-short.png",
-        short_description: "Pro-tier character dynamics with MiniMax Hailuo 2.3 Pro",
+        short_description:
+          "Pro-tier character dynamics with MiniMax Hailuo 2.3 Pro",
         description: "Pro-tier character dynamics with MiniMax Hailuo 2.3 Pro",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1046,21 +1066,15 @@ router.get("/bookmarks", protect, async (req, res) => {
         category: "video",
         custom_url: "/generate-ai-videos",
       },
-      "veo-3.1-lite": {
-        title: "Veo 3.1 Lite",
-        slug: "veo-3.1-lite",
-        tab_image: "assets/images/Veo.png",
-        short_description: "Efficient high-definition video generation with Veo 3.1 Lite",
-        description: "Efficient high-definition video generation with Veo 3.1 Lite",
-        category: "video",
-        custom_url: "/generate-ai-videos",
-      },
-      "gen4_turbo": {
+
+      gen4_turbo: {
         title: "Runway Gen-4 Turbo",
         slug: "gen4_turbo",
         tab_image: "assets/images/Runway.png",
-        short_description: "Fast economical image-to-video generation with Runway Gen-4 Turbo",
-        description: "Fast economical image-to-video generation with Runway Gen-4 Turbo",
+        short_description:
+          "Fast economical image-to-video generation with Runway Gen-4 Turbo",
+        description:
+          "Fast economical image-to-video generation with Runway Gen-4 Turbo",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -1077,7 +1091,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Kling O3 Pro",
         slug: "kling-o3-pro",
         tab_image: "assets/images/kling.png",
-        short_description: "Pro-tier high-quality video synthesis with Kling O3 Pro",
+        short_description:
+          "Pro-tier high-quality video synthesis with Kling O3 Pro",
         description: "Pro-tier high-quality video synthesis with Kling O3 Pro",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1086,8 +1101,10 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Kling 3 Standard",
         slug: "kling-3-standard",
         tab_image: "assets/images/kling.png",
-        short_description: "Multi-shot cinematic video creation with Kling 3 Standard",
-        description: "Multi-shot cinematic video creation with Kling 3 Standard",
+        short_description:
+          "Multi-shot cinematic video creation with Kling 3 Standard",
+        description:
+          "Multi-shot cinematic video creation with Kling 3 Standard",
         category: "video",
         custom_url: "/generate-ai-videos",
       },
@@ -1095,7 +1112,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Kling 3 Turbo",
         slug: "kling-3-turbo",
         tab_image: "assets/images/kling.png",
-        short_description: "Fast and responsive video generation with Kling 3 Turbo",
+        short_description:
+          "Fast and responsive video generation with Kling 3 Turbo",
         description: "Fast and responsive video generation with Kling 3 Turbo",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1104,7 +1122,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Kling 2.6 Pro",
         slug: "kling-2.6-pro",
         tab_image: "assets/images/kling.png",
-        short_description: "Cinematic realism and native audio with Kling 2.6 Pro",
+        short_description:
+          "Cinematic realism and native audio with Kling 2.6 Pro",
         description: "Cinematic realism and native audio with Kling 2.6 Pro",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1113,7 +1132,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Seedance 2.5",
         slug: "seedance-2.5",
         tab_image: "assets/icon/seedance_logo.png",
-        short_description: "Advanced multi-second video rendering with Seedance 2.5",
+        short_description:
+          "Advanced multi-second video rendering with Seedance 2.5",
         description: "Advanced multi-second video rendering with Seedance 2.5",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1122,7 +1142,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "MiniMax H3 Max",
         slug: "minimax-h3-max",
         tab_image: "assets/images/minimax-short.png",
-        short_description: "High-resolution video synthesis with MiniMax H3 Max",
+        short_description:
+          "High-resolution video synthesis with MiniMax H3 Max",
         description: "High-resolution video synthesis with MiniMax H3 Max",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1140,7 +1161,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "Wan 3 Prime",
         slug: "wan-3-prime",
         tab_image: "assets/icon/wan_logo.png",
-        short_description: "Premium inference tier video generation with Wan 3 Prime",
+        short_description:
+          "Premium inference tier video generation with Wan 3 Prime",
         description: "Premium inference tier video generation with Wan 3 Prime",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1149,7 +1171,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "PixVerse V6",
         slug: "pixverse-v6",
         tab_image: "assets/icon/pixverse_logo.png",
-        short_description: "Cutting-edge multimodal video creation with PixVerse V6",
+        short_description:
+          "Cutting-edge multimodal video creation with PixVerse V6",
         description: "Cutting-edge multimodal video creation with PixVerse V6",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1158,7 +1181,8 @@ router.get("/bookmarks", protect, async (req, res) => {
         title: "PixVerse C1",
         slug: "pixverse-c1",
         tab_image: "assets/icon/pixverse_logo.png",
-        short_description: "Audio-enabled dynamic camera movement with PixVerse C1",
+        short_description:
+          "Audio-enabled dynamic camera movement with PixVerse C1",
         description: "Audio-enabled dynamic camera movement with PixVerse C1",
         category: "video",
         custom_url: "/generate-ai-videos",
@@ -1196,7 +1220,9 @@ router.get("/bookmarks", protect, async (req, res) => {
           if (mongoose.Types.ObjectId.isValid(b.itemId)) {
             item = await Model.findById(b.itemId).lean();
           } else {
-            item = await Model.findOne({ $or: [{ slug: b.itemId }, { id: b.itemId }, { model: b.itemId }] }).lean();
+            item = await Model.findOne({
+              $or: [{ slug: b.itemId }, { id: b.itemId }, { model: b.itemId }],
+            }).lean();
           }
           if (!item) return null;
 
@@ -1204,7 +1230,10 @@ router.get("/bookmarks", protect, async (req, res) => {
           const formatted = await fetchModelData(b.modelName, category);
           // find the same record by ID in formatted data
           const record = formatted.find(
-            (x) => x._id?.toString() === b.itemId?.toString() || x.slug === b.itemId || x.id === b.itemId,
+            (x) =>
+              x._id?.toString() === b.itemId?.toString() ||
+              x.slug === b.itemId ||
+              x.id === b.itemId,
           );
           if (!record) return null;
 
@@ -1867,7 +1896,7 @@ const customToolMappings = {
   },
   // 👇 New Productivity Category Added Here
   productivity: {
-    "Web Search": "/web-search",
+    "AI Web Search": "/web-search",
     "AI Coding Assistant": "/coding",
     Calendar: "/calendar",
     Project: "/projects",
@@ -1878,7 +1907,7 @@ const customToolMappings = {
     "Market Research Tool": "/market-research",
     "Business Development Assistant": "/business-development",
     "Deep Research": "/deep-research",
-    " AI Financial Advisor": "financial-advisor",
+    "AI Financial Advisor": "financial-advisor",
     "Retirement Calculator": "/retirement-calculator",
     "Stock Market Tracker": "/stock-market-tracker",
     "Business Ideas Generator": "/small-business-idea-generator",
@@ -1990,8 +2019,8 @@ const customToolMappings = {
     DeepSeek: "/deepseek",
     Perplexity: "/perplexity",
     Llama: "/llama",
-    "Meta Muse":"/muse",
-    Muse:"/muse",
+    "Meta Muse": "/muse",
+    Muse: "/muse",
     Grok: "/grok",
     Kimi: "/kimi",
     Mistral: "/mistral",
