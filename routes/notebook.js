@@ -159,25 +159,24 @@ const validateNotebookSourceLimits = async (req, res, next) => {
 };
 
 // Plan Validation Middleware: Restrict Notebook LLM exclusively to pro_max plan users
-const requireProMaxPlan = (req, res, next) => {
-  if (!req.user || req.user.plan !== 'pro_max') {
+ const requireProMaxPlan = (req, res, next) => {
+  const allowedPlans = ['pro', 'pro_max'];
+  if (!req.user || !allowedPlans.includes(req.user.plan)) {
     return res.status(403).json({
       success: false,
       requiresUpgrade: true,
-      requiredPlan: 'pro_max',
-      message: 'Notebook LLM is only available on the Premium (pro_max) plan. Please upgrade to access this feature.',
+      requiredPlan: 'pro',
+      message: 'Notebook LLM is available on Pro and Pro Max plans. Please upgrade to access this feature.',
     });
   }
-
   if (req.user.subscription_status === 'trialing') {
     return res.status(403).json({
       success: false,
       requiresUpgrade: true,
-      requiredPlan: 'pro_max',
+      requiredPlan: 'pro',
       message: 'Notebook LLM is not available during the free trial. Please wait for your trial to end and your subscription to become active.',
     });
   }
-
   next();
 };
 

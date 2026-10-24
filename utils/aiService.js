@@ -2850,6 +2850,91 @@ const parseFalError = (error) => {
   return customError;
 };
 
+// Helper for Fal Storage upload (Supports large images & videos up to 100MB+ via presigned upload)
+async function uploadMediaToFalStorage(buffer, mimeType = "image/png", apiKey) {
+  if (!buffer) return null;
+  const axios = require("axios");
+  const cleanApiKey = (apiKey || "").replace(/^Key\s+/i, "").trim();
+
+  // Method 1: Try Fal 2-Step Presigned Upload (Supports Flutter, React, large files up to 100MB+)
+  try {
+    let ext = "bin";
+    let contentType = mimeType || "application/octet-stream";
+
+    if (contentType.includes("video") || contentType.includes("mp4")) {
+      ext = "mp4";
+      contentType = "video/mp4";
+    } else if (contentType.includes("jpeg") || contentType.includes("jpg")) {
+      ext = "jpg";
+      contentType = "image/jpeg";
+    } else if (contentType.includes("png")) {
+      ext = "png";
+      contentType = "image/png";
+    } else {
+      // Flutter / Mobile uploads default to octet-stream
+      ext = buffer.length > 5 * 1024 * 1024 ? "mp4" : "png";
+      contentType = "application/octet-stream";
+    }
+
+    const initRes = await axios.post(
+      "https://rest.alpha.fal.ai/storage/upload/initiate",
+      {
+        file_name: `upload_${Date.now()}.${ext}`,
+        content_type: contentType,
+      },
+      {
+        headers: {
+          Authorization: `Key ${cleanApiKey}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    if (initRes.data?.upload_url && initRes.data?.file_url) {
+      await axios.put(initRes.data.upload_url, buffer, {
+        headers: {
+          "Content-Type": contentType,
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+      console.log(`☁️ Successfully uploaded media via Fal Presigned URL: ${initRes.data.file_url}`);
+      return initRes.data.file_url;
+    }
+  } catch (initErr) {
+    // If Fal initiate rejects, silently proceed to direct or buffer fallback
+  }
+
+  // Method 2: Fallback to direct Fal Storage upload
+  try {
+    const uploadRes = await axios.post(
+      "https://rest.alpha.fal.ai/storage/upload",
+      buffer,
+      {
+        headers: {
+          Authorization: `Key ${cleanApiKey}`,
+          "Content-Type": "application/octet-stream",
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      }
+    );
+    const mediaUrl = uploadRes.data?.file_url || uploadRes.data?.url;
+    if (mediaUrl) {
+      return mediaUrl;
+    }
+  } catch (err) {
+    // Proceed to Data URI fallback
+  }
+
+  // Method 3: Final fallback to data URI if under 5MB
+  if (buffer.length < 5 * 1024 * 1024) {
+    const safeMime = (mimeType && mimeType.includes("/")) ? mimeType : "video/mp4";
+    return `data:${safeMime};base64,${buffer.toString("base64")}`;
+  }
+  return null;
+}
+
 class AIService {
   constructor() {
     this.providers = new Map();
@@ -5183,12 +5268,17 @@ class AIService {
         wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true",
     };
 
-    if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
-      body.image_url = imgDataUri;
-      body.start_image_url = imgDataUri;
+    // Process media files ONLY for Kling
+    if (imageFile && imageFile.buffer) {
+      const uImg = await uploadMediaToFalStorage(
+        imageFile.buffer,
+        imageFile.mimetype || "image/png",
+        provider.api_key
+      );
+      if (uImg) {
+        body.image_url = uImg;
+        body.start_image_url = uImg;
+      }
     }
 
     if (isReferenceMode) {
@@ -5196,37 +5286,42 @@ class AIService {
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
 
-      const imageB64List = [];
+      const imageUrlList = [];
       if (validRefImages.length > 0) {
-        validRefImages.forEach((f) => {
-          const b64 = f.buffer.toString("base64");
-          const mType = f.mimetype || "image/png";
-          imageB64List.push(`data:${mType};base64,${b64}`);
-        });
-      } else if (imageFile && imageFile.buffer) {
-        const b64 = imageFile.buffer.toString("base64");
-        const mType = imageFile.mimetype || "image/png";
-        imageB64List.push(`data:${mType};base64,${b64}`);
+        for (const f of validRefImages) {
+          const uUrl = await uploadMediaToFalStorage(
+            f.buffer,
+            f.mimetype || "image/png",
+            provider.api_key
+          );
+          if (uUrl) imageUrlList.push(uUrl);
+        }
+      } else if (body.image_url) {
+        imageUrlList.push(body.image_url);
       }
 
-      if (imageB64List.length > 0) {
-        body.image_urls = imageB64List;
-        body.images = imageB64List;
-        body.reference_images = imageB64List;
+      if (imageUrlList.length > 0) {
+        body.image_urls = imageUrlList;
+        body.images = imageUrlList;
+        body.reference_images = imageUrlList;
         if (!body.image_url) {
-          body.image_url = imageB64List[0];
-          body.start_image_url = imageB64List[0];
+          body.image_url = imageUrlList[0];
+          body.start_image_url = imageUrlList[0];
         }
       }
 
       if (videoFile && videoFile.buffer) {
-        const b64Vid = videoFile.buffer.toString("base64");
-        const mTypeVid = videoFile.mimetype || "video/mp4";
-        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
-        body.video_urls = [vidUrl];
-        body.videos = [vidUrl];
-        body.reference_video = vidUrl;
-        body.video_url = vidUrl;
+        const uVid = await uploadMediaToFalStorage(
+          videoFile.buffer,
+          videoFile.mimetype || "video/mp4",
+          provider.api_key
+        );
+        if (uVid) {
+          body.video_urls = [uVid];
+          body.videos = [uVid];
+          body.reference_video = uVid;
+          body.video_url = uVid;
+        }
       }
     }
 
@@ -5249,12 +5344,10 @@ class AIService {
 
       // Step 2: Poll for completion (up to 10 minutes)
       for (let i = 0; i < 120; i++) {
-        console.log(`⏳ Polling attempt ${i + 1} for Kling task...`);
         await new Promise((resolve) => setTimeout(resolve, 5000)); // Poll every 5 seconds
 
         const statusRes = await axios.get(statusUrl, { headers });
         const status = statusRes.data?.status;
-        console.log(`📌 Kling Status: ${status}`);
 
         if (status === "COMPLETED") {
           isReady = true;
@@ -5372,10 +5465,13 @@ class AIService {
       // we log wantsAudio but omit it from the strict payload to avoid Fal API 422 Errors unless directly supported
     };
 
-    if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+    if (imageFile && imageFile.buffer) {
+      const uImg = await uploadMediaToFalStorage(
+        imageFile.buffer,
+        imageFile.mimetype || "image/png",
+        provider.api_key
+      );
+      if (uImg) body.image_url = uImg;
     }
 
     try {
@@ -5579,10 +5675,12 @@ class AIService {
         wantsAudio === true || wantsAudio === "yes" || wantsAudio === "true",
     };
 
-    if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      body.image_url = `data:${mimeType};base64,${base64Image}`;
+    if (imageFile && imageFile.buffer) {
+      body.image_url = await uploadMediaToFalStorage(
+        imageFile.buffer,
+        imageFile.mimetype || "image/png",
+        apiKey
+      );
     }
 
     if (isReferenceMode) {
@@ -5590,36 +5688,41 @@ class AIService {
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
 
-      const imageB64List = [];
+      const imageUrlList = [];
       if (validRefImages.length > 0) {
-        validRefImages.forEach((f) => {
-          const b64 = f.buffer.toString("base64");
-          const mType = f.mimetype || "image/png";
-          imageB64List.push(`data:${mType};base64,${b64}`);
-        });
-      } else if (imageFile && imageFile.buffer) {
-        const b64 = imageFile.buffer.toString("base64");
-        const mType = imageFile.mimetype || "image/png";
-        imageB64List.push(`data:${mType};base64,${b64}`);
+        for (const f of validRefImages) {
+          const uUrl = await uploadMediaToFalStorage(
+            f.buffer,
+            f.mimetype || "image/png",
+            apiKey
+          );
+          if (uUrl) imageUrlList.push(uUrl);
+        }
+      } else if (body.image_url) {
+        imageUrlList.push(body.image_url);
       }
 
-      if (imageB64List.length > 0) {
-        body.image_urls = imageB64List;
-        body.images = imageB64List;
-        body.reference_images = imageB64List;
+      if (imageUrlList.length > 0) {
+        body.image_urls = imageUrlList;
+        body.images = imageUrlList;
+        body.reference_images = imageUrlList;
         if (!body.image_url) {
-          body.image_url = imageB64List[0];
+          body.image_url = imageUrlList[0];
         }
       }
 
       if (videoFile && videoFile.buffer) {
-        const b64Vid = videoFile.buffer.toString("base64");
-        const mTypeVid = videoFile.mimetype || "video/mp4";
-        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
-        body.video_urls = [vidUrl];
-        body.videos = [vidUrl];
-        body.reference_video = vidUrl;
-        body.video_url = vidUrl;
+        const uVid = await uploadMediaToFalStorage(
+          videoFile.buffer,
+          videoFile.mimetype || "video/mp4",
+          apiKey
+        );
+        if (uVid) {
+          body.video_urls = [uVid];
+          body.videos = [uVid];
+          body.reference_video = uVid;
+          body.video_url = uVid;
+        }
       }
 
       // Ensure prompt mentions [Image1] if user didn't specify placeholders
@@ -5823,12 +5926,16 @@ class AIService {
       }
     }
 
-    if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
-      body.image_url = imgDataUri;
-      body.start_image_url = imgDataUri;
+    if (imageFile && imageFile.buffer) {
+      const uImg = await uploadMediaToFalStorage(
+        imageFile.buffer,
+        imageFile.mimetype || "image/png",
+        apiKey
+      );
+      if (uImg) {
+        body.image_url = uImg;
+        body.start_image_url = uImg;
+      }
     }
 
     if (isReferenceMode) {
@@ -5836,39 +5943,44 @@ class AIService {
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
 
-      const imageB64List = [];
+      const imageUrlList = [];
       if (validRefImages.length > 0) {
-        validRefImages.forEach((f) => {
-          const b64 = f.buffer.toString("base64");
-          const mType = f.mimetype || "image/png";
-          imageB64List.push(`data:${mType};base64,${b64}`);
-        });
-      } else if (imageFile && imageFile.buffer) {
-        const b64 = imageFile.buffer.toString("base64");
-        const mType = imageFile.mimetype || "image/png";
-        imageB64List.push(`data:${mType};base64,${b64}`);
+        for (const f of validRefImages) {
+          const uUrl = await uploadMediaToFalStorage(
+            f.buffer,
+            f.mimetype || "image/png",
+            apiKey
+          );
+          if (uUrl) imageUrlList.push(uUrl);
+        }
+      } else if (body.image_url) {
+        imageUrlList.push(body.image_url);
       }
 
-      if (imageB64List.length > 0) {
-        body.reference_image_urls = imageB64List;
-        body.image_urls = imageB64List;
-        body.images = imageB64List;
-        body.reference_images = imageB64List;
+      if (imageUrlList.length > 0) {
+        body.reference_image_urls = imageUrlList;
+        body.image_urls = imageUrlList;
+        body.images = imageUrlList;
+        body.reference_images = imageUrlList;
         if (!body.image_url) {
-          body.image_url = imageB64List[0];
-          body.start_image_url = imageB64List[0];
+          body.image_url = imageUrlList[0];
+          body.start_image_url = imageUrlList[0];
         }
       }
 
       if (videoFile && videoFile.buffer) {
-        const b64Vid = videoFile.buffer.toString("base64");
-        const mTypeVid = videoFile.mimetype || "video/mp4";
-        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
-        body.reference_video_urls = [vidUrl];
-        body.video_urls = [vidUrl];
-        body.videos = [vidUrl];
-        body.reference_video = vidUrl;
-        body.video_url = vidUrl;
+        const uVid = await uploadMediaToFalStorage(
+          videoFile.buffer,
+          videoFile.mimetype || "video/mp4",
+          apiKey
+        );
+        if (uVid) {
+          body.reference_video_urls = [uVid];
+          body.video_urls = [uVid];
+          body.videos = [uVid];
+          body.reference_video = uVid;
+          body.video_url = uVid;
+        }
       }
     }
 
@@ -6075,12 +6187,16 @@ class AIService {
       body.audio_url = audioUrl;
     }
 
-    if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
-      body.image_url = imgDataUri;
-      body.start_image_url = imgDataUri;
+    if (imageFile && imageFile.buffer) {
+      const uImg = await uploadMediaToFalStorage(
+        imageFile.buffer,
+        imageFile.mimetype || "image/png",
+        apiKey
+      );
+      if (uImg) {
+        body.image_url = uImg;
+        body.start_image_url = uImg;
+      }
     }
 
     if (isReferenceMode) {
@@ -6088,39 +6204,44 @@ class AIService {
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
 
-      const imageB64List = [];
+      const imageUrlList = [];
       if (validRefImages.length > 0) {
-        validRefImages.forEach((f) => {
-          const b64 = f.buffer.toString("base64");
-          const mType = f.mimetype || "image/png";
-          imageB64List.push(`data:${mType};base64,${b64}`);
-        });
-      } else if (imageFile && imageFile.buffer) {
-        const b64 = imageFile.buffer.toString("base64");
-        const mType = imageFile.mimetype || "image/png";
-        imageB64List.push(`data:${mType};base64,${b64}`);
+        for (const f of validRefImages) {
+          const uUrl = await uploadMediaToFalStorage(
+            f.buffer,
+            f.mimetype || "image/png",
+            apiKey
+          );
+          if (uUrl) imageUrlList.push(uUrl);
+        }
+      } else if (body.image_url) {
+        imageUrlList.push(body.image_url);
       }
 
-      if (imageB64List.length > 0) {
-        body.reference_image_urls = imageB64List;
-        body.image_urls = imageB64List;
-        body.images = imageB64List;
-        body.reference_images = imageB64List;
+      if (imageUrlList.length > 0) {
+        body.reference_image_urls = imageUrlList;
+        body.image_urls = imageUrlList;
+        body.images = imageUrlList;
+        body.reference_images = imageUrlList;
         if (!body.image_url) {
-          body.image_url = imageB64List[0];
-          body.start_image_url = imageB64List[0];
+          body.image_url = imageUrlList[0];
+          body.start_image_url = imageUrlList[0];
         }
       }
 
       if (videoFile && videoFile.buffer) {
-        const b64Vid = videoFile.buffer.toString("base64");
-        const mTypeVid = videoFile.mimetype || "video/mp4";
-        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
-        body.reference_video_urls = [vidUrl];
-        body.video_urls = [vidUrl];
-        body.videos = [vidUrl];
-        body.reference_video = vidUrl;
-        body.video_url = vidUrl;
+        const uVid = await uploadMediaToFalStorage(
+          videoFile.buffer,
+          videoFile.mimetype || "video/mp4",
+          apiKey
+        );
+        if (uVid) {
+          body.reference_video_urls = [uVid];
+          body.video_urls = [uVid];
+          body.videos = [uVid];
+          body.reference_video = uVid;
+          body.video_url = uVid;
+        }
       }
     }
 
@@ -6327,14 +6448,18 @@ class AIService {
       body.generate_audio = body.generate_audio_switch;
     }
 
-    if (imageFile) {
-      const base64Image = imageFile.buffer.toString("base64");
-      const mimeType = imageFile.mimetype || "image/png";
-      const imgDataUri = `data:${mimeType};base64,${base64Image}`;
-      body.image_url = imgDataUri;
-      body.start_image_url = imgDataUri;
-      body.img_id = imgDataUri;
-      body.image = imgDataUri;
+    if (imageFile && imageFile.buffer) {
+      const uImg = await uploadMediaToFalStorage(
+        imageFile.buffer,
+        imageFile.mimetype || "image/png",
+        apiKey
+      );
+      if (uImg) {
+        body.image_url = uImg;
+        body.start_image_url = uImg;
+        body.img_id = uImg;
+        body.image = uImg;
+      }
     }
 
     if (isReferenceMode) {
@@ -6342,46 +6467,51 @@ class AIService {
         ? referenceImageFiles.filter((f) => f && f.buffer)
         : [];
 
-      const imageB64List = [];
+      const imageUrlList = [];
       if (validRefImages.length > 0) {
-        validRefImages.forEach((f) => {
-          const b64 = f.buffer.toString("base64");
-          const mType = f.mimetype || "image/png";
-          imageB64List.push(`data:${mType};base64,${b64}`);
-        });
-      } else if (imageFile && imageFile.buffer) {
-        const b64 = imageFile.buffer.toString("base64");
-        const mType = imageFile.mimetype || "image/png";
-        imageB64List.push(`data:${mType};base64,${b64}`);
+        for (const f of validRefImages) {
+          const uUrl = await uploadMediaToFalStorage(
+            f.buffer,
+            f.mimetype || "image/png",
+            apiKey
+          );
+          if (uUrl) imageUrlList.push(uUrl);
+        }
+      } else if (body.image_url) {
+        imageUrlList.push(body.image_url);
       }
 
-      if (imageB64List.length > 0) {
-        body.reference_image_urls = imageB64List;
-        body.image_urls = imageB64List;
-        body.images = imageB64List;
-        body.reference_images = imageB64List;
-        body.image_references = imageB64List.map((url, index) => ({
+      if (imageUrlList.length > 0) {
+        body.reference_image_urls = imageUrlList;
+        body.image_urls = imageUrlList;
+        body.images = imageUrlList;
+        body.reference_images = imageUrlList;
+        body.image_references = imageUrlList.map((url, index) => ({
           image_url: url,
           url: url,
           ref_name: `image_${index + 1}`,
         }));
         if (!body.image_url) {
-          body.image_url = imageB64List[0];
-          body.start_image_url = imageB64List[0];
-          body.img_id = imageB64List[0];
-          body.image = imageB64List[0];
+          body.image_url = imageUrlList[0];
+          body.start_image_url = imageUrlList[0];
+          body.img_id = imageUrlList[0];
+          body.image = imageUrlList[0];
         }
       }
 
       if (videoFile && videoFile.buffer) {
-        const b64Vid = videoFile.buffer.toString("base64");
-        const mTypeVid = videoFile.mimetype || "video/mp4";
-        const vidUrl = `data:${mTypeVid};base64,${b64Vid}`;
-        body.reference_video_urls = [vidUrl];
-        body.video_urls = [vidUrl];
-        body.videos = [vidUrl];
-        body.reference_video = vidUrl;
-        body.video_url = vidUrl;
+        const uVid = await uploadMediaToFalStorage(
+          videoFile.buffer,
+          videoFile.mimetype || "video/mp4",
+          apiKey
+        );
+        if (uVid) {
+          body.reference_video_urls = [uVid];
+          body.video_urls = [uVid];
+          body.videos = [uVid];
+          body.reference_video = uVid;
+          body.video_url = uVid;
+        }
       }
     }
 

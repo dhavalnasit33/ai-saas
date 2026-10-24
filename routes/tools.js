@@ -1750,7 +1750,12 @@ router.post(
     const referenceImageFiles = [];
 
     for (const f of files) {
-      if (f.fieldname === "image" || f.fieldname === "file") {
+      const isVideoMime = (f.mimetype && f.mimetype.startsWith("video/")) || 
+                          /\.(mp4|mov|avi|webm|mkv)$/i.test(f.originalname || "");
+
+      if (f.fieldname.startsWith("video") || f.fieldname === "background" || isVideoMime) {
+        videoFile = f;
+      } else if (f.fieldname === "image" || f.fieldname === "file") {
         imageFile = f;
         if (modelType === "reference-to-video") {
           referenceImageFiles.push(f);
@@ -1758,8 +1763,6 @@ router.post(
       } else if (f.fieldname.startsWith("image")) {
         if (!imageFile) imageFile = f;
         referenceImageFiles.push(f);
-      } else if (f.fieldname.startsWith("video") || f.fieldname === "background") {
-        videoFile = f;
       }
     }
 
@@ -1799,7 +1802,13 @@ router.post(
       });
     }
 
-    prompt = `${prompt.trim()}, depicted in a peaceful, calm, and highly serene environment. Completely safe for all audiences, National Geographic documentary style, no violence, no aggression.`;
+    // Only append generic serenity styling if user did NOT provide a reference video/mode
+    // to preserve the subject, actor, and environment of the input reference
+    if (modelType !== "reference-to-video" && !videoFile) {
+      prompt = `${prompt.trim()}, depicted in a peaceful, calm, and highly serene environment. Completely safe for all audiences, no violence, no aggression.`;
+    } else {
+      prompt = prompt.trim();
+    }
 
     try {
       const user = await User.findById(req.user.id);
