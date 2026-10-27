@@ -223,6 +223,8 @@ async function parseSpreadsheet(buffer, ext) {
         type: "buffer",
         cellFormula: false,
         cellHTML: false,
+        cellDates: true, // Automatically parse Excel date serials into real dates
+        dateNF: "yyyy-mm-dd",
         raw: false, // Reads formatted/cached strings
         dense: true,
       });
