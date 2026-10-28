@@ -300,7 +300,7 @@ async function parseSpreadsheet(buffer, ext) {
       });
 
       textRepresentation += `\nColumn Structure for "${sName}":\n`;
-      sCols.slice(0, 20).forEach((col) => {
+      sCols.slice(0, 150).forEach((col) => {
         const sampleVals = sData
           .slice(0, 4)
           .map((r) => r[col])

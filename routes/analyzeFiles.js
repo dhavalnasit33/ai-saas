@@ -87,83 +87,135 @@ function isSafePublicUrl(inputUrl) {
 router.post(
   "/upload-and-create",
   protect,
-  upload.single("file"),
+  upload.any(),
   async (req, res) => {
     try {
       const userId = req.user._id || req.user.id;
+      const rawFiles = req.files && req.files.length > 0 ? req.files : (req.file ? [req.file] : []);
 
-      if (!req.file) {
+      if (rawFiles.length === 0) {
         return res.status(400).json({
           success: false,
-          message: "No file uploaded. Please select a supported file.",
+          message: "No file uploaded. Please select up to 5 supported files.",
         });
       }
 
-      const file = req.file;
-      const originalFileName = file.originalname || "Uploaded_File";
-      const initialPrompt = (
+      // Limit to max 5 files
+      const filesToProcess = rawFiles.slice(0, 5);
+      const rawInitial = (
         req.body.prompt ||
         req.body.initialPrompt ||
         ""
       ).trim();
-      const parsed = await parseUploadedFile(file);
+      const isGeneric =
+        !rawInitial ||
+        rawInitial.toLowerCase() === "analyze this file or data" ||
+        rawInitial.toLowerCase() === "analyze this file";
+      const initialPrompt =
+        isGeneric && filesToProcess.length > 1
+          ? `Analyze all ${filesToProcess.length} uploaded files and provide a comprehensive multi-file analysis covering every uploaded file in detail.`
+          : rawInitial;
 
-      if (parsed.error) {
-        return res.status(400).json({
-          success: false,
-          message: parsed.error,
+      const parsedFiles = [];
+      for (const file of filesToProcess) {
+        const originalFileName = file.originalname || "Uploaded_File";
+        const parsed = await parseUploadedFile(file);
+
+        if (parsed.error && filesToProcess.length === 1) {
+          return res.status(400).json({
+            success: false,
+            message: parsed.error,
+          });
+        } else if (parsed.error) {
+          console.warn(`File ${originalFileName} parse warning: ${parsed.error}`);
+        }
+
+        let fileUrl = "";
+        try {
+          const safeExt = path.extname(originalFileName) || ".bin";
+          const uniqueFileName = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
+          const targetPath = path.join(analyzeFilesUploadsDir, uniqueFileName);
+          fs.writeFileSync(targetPath, file.buffer);
+          fileUrl = `/uploads/analyze-files/${uniqueFileName}`;
+        } catch (saveErr) {
+          console.warn("Could not save file to disk:", saveErr.message);
+        }
+
+        parsedFiles.push({
+          originalFileName,
+          fileUrl,
+          fileSize: file.size,
+          fileType: parsed.fileType || "pdf",
+          pageCount: parsed.pageCount || 1,
+          rowCount: parsed.rowCount || 0,
+          columnCount: parsed.columnCount || 0,
+          sheetNames: parsed.sheetNames || [],
+          columns: parsed.columns || [],
+          tabularPreview: parsed.tabularPreview || [],
+          tableData: parsed.rawTableData
+            ? parsed.rawTableData.slice(0, 2000)
+            : (parsed.tabularPreview || []),
+          rawTableData: parsed.rawTableData || null,
+          extractedText: parsed.extractedText || "",
+          canonicalContent: parsed.canonicalContent || parsed.extractedText || "",
+          visualImageUrls: parsed.visualImageUrls || [],
+          datasetCoverage: parsed.datasetCoverage || {
+            totalRows: parsed.rowCount || 0,
+            analyzedRows: parsed.rowCount || 0,
+            isComplete: true,
+          },
+          formulaWarnings: parsed.formulaWarnings || [],
+          wordCount: parsed.wordCount || 0,
+          tokenCount: estimateTokens(parsed.extractedText || ""),
         });
       }
 
-      // Save raw file to disk for preview / download
-      let fileUrl = "";
-      try {
-        const safeExt = path.extname(originalFileName) || ".bin";
-        const uniqueFileName = `${Date.now()}-${crypto.randomBytes(6).toString("hex")}${safeExt}`;
-        const targetPath = path.join(analyzeFilesUploadsDir, uniqueFileName);
-        fs.writeFileSync(targetPath, file.buffer);
-        fileUrl = `/uploads/analyze-files/${uniqueFileName}`;
-      } catch (saveErr) {
-        console.warn("Could not save file to disk:", saveErr.message);
+      if (parsedFiles.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Failed to process the uploaded files.",
+        });
       }
 
-      const title = originalFileName.replace(/\.[^/.]+$/, "");
-      const tokenCount = estimateTokens(parsed.extractedText || "");
+      const primary = parsedFiles[0];
+      const title = parsedFiles.length > 1
+        ? `${primary.originalFileName.replace(/\.[^/.]+$/, "")} (+${parsedFiles.length - 1} files)`
+        : primary.originalFileName.replace(/\.[^/.]+$/, "");
+
+      const combinedText = parsedFiles.map((f, i) => `=== FILE ${i + 1}: ${f.originalFileName} (${f.fileType}) ===\n${f.canonicalContent || f.extractedText || ""}`).join("\n\n");
+      const tokenCount = estimateTokens(combinedText);
       const contentHash = crypto
         .createHash("sha256")
-        .update(parsed.extractedText || "")
+        .update(combinedText)
         .digest("hex");
 
       const analyzeFile = new AnalyzeFile({
         userId,
         title,
-        originalFileName,
-        fileUrl,
+        originalFileName: primary.originalFileName,
+        fileUrl: primary.fileUrl,
         initialPrompt,
-        fileSize: file.size,
-        fileType: parsed.fileType || "pdf",
-        pageCount: parsed.pageCount || 1,
-        rowCount: parsed.rowCount || 0,
-        columnCount: parsed.columnCount || 0,
-        sheetNames: parsed.sheetNames || [],
-        columns: parsed.columns || [],
-        tabularPreview: parsed.tabularPreview || [],
-        datasetCoverage: parsed.datasetCoverage || {
-          totalRows: parsed.rowCount || 0,
-          analyzedRows: parsed.rowCount || 0,
-          isComplete: true,
-        },
-        formulaWarnings: parsed.formulaWarnings || [],
-        wordCount: parsed.wordCount || 0,
+        fileSize: primary.fileSize,
+        fileType: primary.fileType,
+        pageCount: primary.pageCount,
+        rowCount: primary.rowCount,
+        columnCount: primary.columnCount,
+        sheetNames: primary.sheetNames,
+        columns: primary.columns,
+        tabularPreview: primary.tabularPreview,
+        datasetCoverage: primary.datasetCoverage,
+        formulaWarnings: primary.formulaWarnings,
+        wordCount: primary.wordCount,
         tokenCount,
         contentHash,
-        extractedText: parsed.extractedText || "",
-        canonicalContent: parsed.canonicalContent || parsed.extractedText || "",
-        rawTableData: parsed.rawTableData || null,
-        visualImageUrls: parsed.visualImageUrls || [],
+        extractedText: combinedText,
+        canonicalContent: combinedText,
+        rawTableData: primary.rawTableData,
+        visualImageUrls: primary.visualImageUrls,
         status: "READY",
         messages: [],
         telemetry: [],
+        files: parsedFiles,
       });
 
       await analyzeFile.save();
@@ -182,13 +234,26 @@ router.post(
           columnCount: analyzeFile.columnCount,
           pageCount: analyzeFile.pageCount,
           tabularPreview: analyzeFile.tabularPreview,
-          tableData: parsed.rawTableData
-            ? parsed.rawTableData.slice(0, 2000)
-            : analyzeFile.tabularPreview || [],
+          tableData: primary.tableData,
           columns: analyzeFile.columns,
           sheetNames: analyzeFile.sheetNames,
-          extractedText:
-            analyzeFile.extractedText || parsed.extractedText || "",
+          extractedText: analyzeFile.extractedText || "",
+          files: parsedFiles.map(f => ({
+            originalFileName: f.originalFileName,
+            fileType: f.fileType,
+            fileUrl: f.fileUrl,
+            fileSize: f.fileSize,
+            pageCount: f.pageCount,
+            rowCount: f.rowCount,
+            columnCount: f.columnCount,
+            sheetNames: f.sheetNames,
+            columns: f.columns,
+            tabularPreview: f.tabularPreview,
+            tableData: f.tableData,
+            extractedText: f.extractedText,
+            visualImageUrls: f.visualImageUrls,
+            datasetCoverage: f.datasetCoverage,
+          })),
           createdAt: analyzeFile.createdAt,
         },
       });
@@ -372,6 +437,46 @@ router.get("/chats/:id", protect, async (req, res) => {
         .json({ success: false, message: "Analyze chat session not found" });
     }
 
+    const filesArray = (chat.files && chat.files.length > 0)
+      ? chat.files.map(f => ({
+          originalFileName: f.originalFileName,
+          fileType: f.fileType,
+          fileUrl: f.fileUrl,
+          fileSize: f.fileSize,
+          pageCount: f.pageCount,
+          rowCount: f.rowCount,
+          columnCount: f.columnCount,
+          sheetNames: f.sheetNames || [],
+          columns: f.columns || [],
+          tabularPreview: f.tabularPreview || [],
+          tableData: f.rawTableData
+            ? f.rawTableData.slice(0, 2000)
+            : (f.tabularPreview || []),
+          extractedText: f.extractedText || "",
+          datasetCoverage: f.datasetCoverage,
+          formulaWarnings: f.formulaWarnings || [],
+          visualImageUrls: f.visualImageUrls || [],
+        }))
+      : [{
+          originalFileName: chat.originalFileName,
+          fileType: chat.fileType,
+          fileUrl: chat.fileUrl,
+          fileSize: chat.fileSize,
+          pageCount: chat.pageCount,
+          rowCount: chat.rowCount,
+          columnCount: chat.columnCount,
+          sheetNames: chat.sheetNames || [],
+          columns: chat.columns || [],
+          tabularPreview: chat.tabularPreview || [],
+          tableData: chat.rawTableData
+            ? chat.rawTableData.slice(0, 2000)
+            : (chat.tabularPreview || []),
+          extractedText: chat.extractedText || "",
+          datasetCoverage: chat.datasetCoverage,
+          formulaWarnings: chat.formulaWarnings || [],
+          visualImageUrls: chat.visualImageUrls || [],
+        }];
+
     res.json({
       success: true,
       chat: {
@@ -396,6 +501,7 @@ router.get("/chats/:id", protect, async (req, res) => {
         datasetCoverage: chat.datasetCoverage,
         formulaWarnings: chat.formulaWarnings,
         visualImageUrls: chat.visualImageUrls || [],
+        files: filesArray,
         messages: chat.messages || [],
         createdAt: chat.createdAt,
         updatedAt: chat.updatedAt,
@@ -656,11 +762,11 @@ Your goal is to provide accurate, useful analysis—not simply attractive visual
 - Tables: Detailed records with status badges ('Strong', 'High', 'Moderate').
 - Metric Cards: Verified high-signal KPIs with percentage deltas.
 21. Thesys Interactive UI Behavior & Layout Components
-- Title & Overview: Executive H1, brief description, and 1-2 sentence core insight.
-- Top KPI Metric Cards: Exactly 4 metric cards organized in a balanced 2x2 grid (or single horizontal row). Each card MUST feature an icon, bold primary metric value, concise label, and delta trend indicator (+X% YoY or baseline).
+- Title & Overview: Executive H1, brief description, and 1-2 sentence core insight. When analyzing multiple uploaded files, clearly state that this is an integrated analysis across all uploaded files.
+- Top KPI Metric Cards: When analyzing a single file, provide 4 metric cards organized in a balanced 2x2 grid. When MULTIPLE files are uploaded, provide high-signal KPI metric cards representing core metrics from EACH of the uploaded files so that every uploaded file is clearly represented and highlighted.
 - Interactive Tab Bar / Category Filter Pills: When analyzing categories, regions, or products, render interactive pill buttons (e.g., [East & SE Asia], [South Asia], [Latin America]) allowing category exploration.
-- Primary Visualization: Render crisp, high-contrast Bar Charts, Line Charts, or Scatter Plots with clear axes, units, legends, and hover tooltips.
-- Visual Detail Cards Grid: A 2-column or 2x2 grid of cards featuring an icon, title, 2 lines of narrative observations, and color pill badges (e.g. [USA], [Classic]).
+- Primary Visualization & Charts: Render crisp, high-contrast Bar Charts, Line Charts, or Scatter Plots with clear axes, units, legends, and hover tooltips. For multi-file datasets, render comparative visualizations and charts highlighting key distributions, trends, or correlations across the different files.
+- Visual Detail Cards Grid & Cross-File Breakdown: A 2-column or multi-column grid of cards or table featuring observations, metrics, and badges for ALL uploaded files.
 - Structured Data Table: Clean, formatted table with Rank, Item, Category, and colored score/status badges (e.g., [96 / 100], [Strong], [High]).
 - Related Queries (INTERACTIVE THESYS COMPONENT): Conclude substantive analytical overviews with an interactive FollowUpBlock or Accordion component featuring 4 insightful follow-up questions. NEVER output plain unstyled markdown bullet points (<ul><li>) for Related Queries.
 22. Domain-Aware Analytical Patterns
@@ -684,17 +790,47 @@ Your goal is to provide accurate, useful analysis—not simply attractive visual
 ${isModeA ? "CURRENT ACTIVE MODE: Mode A (Automatic File Analysis Overview)" : "CURRENT ACTIVE MODE: Mode B (User-Directed Analysis)"}
 ${specificTaskInstruction ? `\nCurrent Task Goal: ${specificTaskInstruction}` : ""}`;
 
-    let fileContext = `Uploaded File: ${analyzeFile.originalFileName} (${analyzeFile.fileType})\n`;
-    if (analyzeFile.rowCount > 0) {
-      fileContext += `Total Rows: ${analyzeFile.rowCount} | Columns: [${(analyzeFile.columns || []).join(", ")}]\n`;
+    const allFiles = (analyzeFile.files && analyzeFile.files.length > 0)
+      ? analyzeFile.files
+      : [analyzeFile];
+
+    let fileContext = "";
+    if (allFiles.length > 1) {
+      fileContext += `MULTIPLE FILES UPLOADED (${allFiles.length} files in this session):\n`;
+      allFiles.forEach((f, idx) => {
+        fileContext += `File ${idx + 1}: "${f.originalFileName}" [Type: ${f.fileType}, Size: ${(f.fileSize / 1024).toFixed(1)} KB${f.rowCount ? `, Rows: ${f.rowCount}, Cols: ${f.columnCount}` : ""}${f.sheetNames?.length ? `, Sheets: ${f.sheetNames.join(", ")}` : ""}${f.pageCount ? `, Pages: ${f.pageCount}` : ""}]\n`;
+      });
+      fileContext += `\nNOTE: You MUST analyze and address ALL uploaded files together. Answer questions synthesizing data across all files.\n\n`;
+
+      allFiles.forEach((f, idx) => {
+        fileContext += `=== FILE ${idx + 1} OF ${allFiles.length}: ${f.originalFileName} (${(f.fileType || "").toUpperCase()}) ===\n`;
+        if (f.rowCount > 0) {
+          fileContext += `Dimensions: ${f.rowCount} rows x ${f.columnCount} columns\n`;
+          fileContext += `Columns: [${(f.columns || []).join(", ")}]\n`;
+        }
+        if (f.sheetNames && f.sheetNames.length > 0) {
+          fileContext += `Sheets: [${f.sheetNames.join(", ")}]\n`;
+        }
+        if (f.datasetCoverage && !f.datasetCoverage.isComplete) {
+          fileContext += `[DATASET LIMIT WARNING: Only the first ${f.datasetCoverage.analyzedRows} rows of ${f.datasetCoverage.totalRows} rows were processed.]\n`;
+        }
+        fileContext += `Content:\n${f.canonicalContent || f.extractedText || ""}\n`;
+        fileContext += `=== END OF FILE ${idx + 1}: ${f.originalFileName} ===\n\n`;
+      });
+    } else {
+      const singleFile = allFiles[0];
+      fileContext = `Uploaded File: ${singleFile.originalFileName} (${singleFile.fileType})\n`;
+      if (singleFile.rowCount > 0) {
+        fileContext += `Total Rows: ${singleFile.rowCount} | Columns: [${(singleFile.columns || []).join(", ")}]\n`;
+      }
+      if (
+        singleFile.datasetCoverage &&
+        !singleFile.datasetCoverage.isComplete
+      ) {
+        fileContext += `[DATASET LIMIT WARNING: Only the first ${singleFile.datasetCoverage.analyzedRows} rows of ${singleFile.datasetCoverage.totalRows} rows were processed due to dataset limits. Disclose this partial coverage clearly in any summaries or calculations.]\n`;
+      }
+      fileContext += `\n${singleFile.canonicalContent || singleFile.extractedText || ""}`;
     }
-    if (
-      analyzeFile.datasetCoverage &&
-      !analyzeFile.datasetCoverage.isComplete
-    ) {
-      fileContext += `[DATASET LIMIT WARNING: Only the first ${analyzeFile.datasetCoverage.analyzedRows} rows of ${analyzeFile.datasetCoverage.totalRows} rows were processed due to dataset limits. Disclose this partial coverage clearly in any summaries or calculations.]\n`;
-    }
-    fileContext += `\n${analyzeFile.canonicalContent || analyzeFile.extractedText || ""}`;
     // =========================================================================
     // 🔥 DETERMINISTIC ANALYSIS ENGINE (EXCEL, PDF, WORD, TXT, CSV)
     // =========================================================================
@@ -729,51 +865,66 @@ ${specificTaskInstruction ? `\nCurrent Task Goal: ${specificTaskInstruction}` : 
       userQuery.includes("key metrics") ||
       analyzeFile.messages.length <= 1;
 
-    // A. EXCEL: Check ALL sheets for exact numeric totals (e.g. Signups, Visitors, Conversions, etc.)
-    if (wb && wb.SheetNames) {
-      wb.SheetNames.forEach((sName) => {
-        try {
-          const sRows = xlsx.utils.sheet_to_json(wb.Sheets[sName] || {}, {
-            defval: 0,
-          });
-          if (!sRows || sRows.length === 0) return;
-          const sCols = Object.keys(sRows[0]);
-          sCols.forEach((col) => {
-            const cleanCol = col.toLowerCase().replace(/_/g, " ");
-            const singularCol = cleanCol.endsWith("s")
-              ? cleanCol.slice(0, -1)
-              : cleanCol;
-            const colWords = cleanCol.split(" ");
-
-            const isMentioned =
-              isGenericOverviewPrompt ||
-              userQuery.includes(cleanCol) ||
-              userQuery.includes(singularCol) ||
-              colWords.some((w) => {
-                const wSingular = w.endsWith("s") ? w.slice(0, -1) : w;
-                return (
-                  (w.length > 2 && userQuery.includes(w)) ||
-                  (wSingular.length > 2 && userQuery.includes(wSingular))
-                );
-              });
-            if (isMentioned) {
-              const summaryRes = calculateNumericSummary(sRows, col);
-              if (
-                summaryRes &&
-                summaryRes.validCount > 0 &&
-                typeof summaryRes.sum === "number"
-              ) {
-                detectedOperations.push(
-                  `DATA CONTEXT:
-The total sum for "${col}" in sheet "${sName}" across all ${summaryRes.scannedRows} records is ${summaryRes.sum}. State this figure directly and naturally without mentioning internal backend engines or verification notes.`,
-                );
-              }
-            }
-          });
-        } catch (err) {
-          console.warn(`Error scanning sheet ${sName}:`, err);
+    // A. EXCEL: Check ALL sheets across all files for exact numeric totals
+    for (const fItem of allFiles) {
+      let currentWb = null;
+      if (fItem.fileUrl) {
+        const filePath = path.join(process.cwd(), fItem.fileUrl);
+        if (fs.existsSync(filePath)) {
+          try {
+            currentWb = xlsx.readFile(filePath, {
+              cellDates: true,
+              dateNF: "yyyy-mm-dd",
+              raw: false,
+            });
+          } catch (e) {}
         }
-      });
+      }
+      if (currentWb && currentWb.SheetNames) {
+        currentWb.SheetNames.forEach((sName) => {
+          try {
+            const sRows = xlsx.utils.sheet_to_json(currentWb.Sheets[sName] || {}, {
+              defval: 0,
+            });
+            if (!sRows || sRows.length === 0) return;
+            const sCols = Object.keys(sRows[0]);
+            sCols.forEach((col) => {
+              const cleanCol = col.toLowerCase().replace(/_/g, " ");
+              const singularCol = cleanCol.endsWith("s")
+                ? cleanCol.slice(0, -1)
+                : cleanCol;
+              const colWords = cleanCol.split(" ");
+
+              const isMentioned =
+                isGenericOverviewPrompt ||
+                userQuery.includes(cleanCol) ||
+                userQuery.includes(singularCol) ||
+                colWords.some((w) => {
+                  const wSingular = w.endsWith("s") ? w.slice(0, -1) : w;
+                  return (
+                    (w.length > 2 && userQuery.includes(w)) ||
+                    (wSingular.length > 2 && userQuery.includes(wSingular))
+                  );
+                });
+              if (isMentioned) {
+                const summaryRes = calculateNumericSummary(sRows, col);
+                if (
+                  summaryRes &&
+                  summaryRes.validCount > 0 &&
+                  typeof summaryRes.sum === "number"
+                ) {
+                  detectedOperations.push(
+                    `DATA CONTEXT:
+The total sum for "${col}" in file "${fItem.originalFileName}" (sheet "${sName}") across all ${summaryRes.scannedRows} records is ${summaryRes.sum}. State this figure directly and naturally without mentioning internal backend engines or verification notes.`,
+                  );
+                }
+              }
+            });
+          } catch (err) {
+            console.warn(`Error scanning sheet ${sName}:`, err);
+          }
+        });
+      }
     }
     // B. FINANCIAL: Automatic Universal Financial Calculation (ALWAYS CALCULATE FOR 100% ACCURACY)
     try {
@@ -907,7 +1058,7 @@ SECURITY & SYSTEM INTEGRITY DIRECTIVES:
       const visualParts = [
         { type: "text", text: "--- VISUAL IMAGE ATTACHMENT ---" },
       ];
-      visualUrls.slice(0, 3).forEach((vUrl) => {
+      visualUrls.slice(0, 5).forEach((vUrl) => {
         if (
           vUrl &&
           (vUrl.startsWith("data:image/") || vUrl.startsWith("http"))
@@ -942,7 +1093,25 @@ SECURITY & SYSTEM INTEGRITY DIRECTIVES:
     }
     let thesysEnforcedPrompt = prompt;
     if (isModeA) {
-      thesysEnforcedPrompt = `${prompt}
+      if (allFiles.length > 1) {
+        thesysEnforcedPrompt = `${prompt}
+[MODE A - COMPREHENSIVE MULTI-FILE ANALYSIS (${allFiles.length} FILES DETECTED)]:
+The user has uploaded ${allFiles.length} separate files:
+${allFiles.map((f, i) => `  - File ${i + 1}: "${f.originalFileName}" (${f.fileType}, ${f.rowCount ? `${f.rowCount} rows` : `${f.pageCount || 1} pages`})`).join("\n")}
+
+CRITICAL REQUIREMENT: YOU MUST ANALYZE AND DIRECTLY INCLUDE DATA FROM ALL ${allFiles.length} FILES. DO NOT IGNORE OR OMIT ANY FILE.
+Format the output with Thesys Generative UI components:
+1. Executive Header & Synthesis: Title (e.g. "Comprehensive Multi-File Analysis") and an integrated narrative summarizing core findings across ALL ${allFiles.length} files (${allFiles.map((f) => f.originalFileName).join(", ")}).
+2. Multi-File KPI Metric Cards: Render a comprehensive block of KPI metric cards representing key metrics from EACH of the ${allFiles.length} uploaded files (e.g. at least 1-2 distinct verified metrics per file so all ${allFiles.length} files are prominently featured).
+3. Visual Charts & Multi-File Trends: Render high-contrast visual charts (Bar/Line/Donut/Scatter) comparing or correlating key metrics across the files (e.g. attendance trends, performance/exam scores, fee collections, study habits, demographic breakdown).
+4. File-by-File Detail Cards Grid & Breakdown Table:
+   - Provide structured detail cards and tables explicitly breaking down key findings, metrics, and status for EACH of the ${allFiles.length} uploaded files.
+   - For every file, explicitly state its key takeaway, critical figures, and status.
+5. Cross-File Correlations & Key Takeaways: Explain how the data across these files connect and suggest actionable insights.
+6. Related Queries: 4 insightful, actionable follow-up questions with '+' icons covering questions across different files.
+CRITICAL: Ground all numbers, entities, and labels 100% in the uploaded files. Ensure EVERY uploaded file has its metrics and findings clearly represented.`;
+      } else {
+        thesysEnforcedPrompt = `${prompt}
 [MODE A - ADAPTIVE FILE ANALYSIS]:
 Analyze the file content intelligently and dynamically adapt your response to the dataset:
 - FOR SPREADSHEETS / NUMERICAL DATASETS (Excel, CSV, sales, finance, metrics):
@@ -957,8 +1126,16 @@ Analyze the file content intelligently and dynamically adapt your response to th
   3. Do NOT force numerical charts or empty KPI cards where data does not exist. Use clean text-first presentation with structured cards/tables only when meaningful.
   4. Related Queries: 3-4 natural follow-up questions about the document content.
 CRITICAL: Ground all numbers, entities, and labels 100% in the current file context. Never invent figures.`;
+      }
     } else {
-      thesysEnforcedPrompt = `${prompt}
+      if (allFiles.length > 1) {
+        thesysEnforcedPrompt = `${prompt}
+[MODE B - MULTI-FILE USER-DIRECTED ANALYSIS (${allFiles.length} FILES UPLOADED)]:
+The user has uploaded ${allFiles.length} files: ${allFiles.map((f, i) => `"${f.originalFileName}"`).join(", ")}.
+Answer the user's specific question directly, synthesizing data across all relevant uploaded files where applicable. If the question relates to multiple files or general performance, include data from all relevant files.
+CRITICAL: Ground all figures 100% in the uploaded data.`;
+      } else {
+        thesysEnforcedPrompt = `${prompt}
 [MODE B - USER-DIRECTED ANALYSIS]:
 The user has asked a specific question or requested a particular analysis.
 1. Direct Text / Simple Factual Questions:
@@ -972,6 +1149,7 @@ The user has asked a specific question or requested a particular analysis.
    - Key Insights Callout & Summary Table: Highlighted findings with a structured breakdown table using colored status badges ([Strong], [Good], [Peak]).
    - Related Queries (MANDATORY): You MUST ALWAYS conclude the response with the expandable "Related Queries" accordion section containing 4 insightful follow-up questions with '+' icons. Never omit this closing accordion.
 CRITICAL: Ground all figures 100% in the uploaded data.`;
+      }
     }
     c1Messages.push({ role: "user", content: thesysEnforcedPrompt });
 

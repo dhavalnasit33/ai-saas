@@ -93,6 +93,77 @@ const AnalyzeFileTelemetrySchema = new mongoose.Schema(
   }
 );
 
+const AnalyzeSingleFileItemSchema = new mongoose.Schema({
+  originalFileName: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  fileUrl: {
+    type: String,
+    default: '',
+  },
+  fileSize: {
+    type: Number,
+    default: 0,
+  },
+  fileType: {
+    type: String,
+    default: 'pdf',
+  },
+  pageCount: {
+    type: Number,
+    default: 1,
+  },
+  rowCount: {
+    type: Number,
+    default: 0,
+  },
+  columnCount: {
+    type: Number,
+    default: 0,
+  },
+  sheetNames: [{
+    type: String,
+  }],
+  columns: [{
+    type: String,
+  }],
+  tabularPreview: [mongoose.Schema.Types.Mixed],
+  datasetCoverage: {
+    totalRows: { type: Number, default: 0 },
+    analyzedRows: { type: Number, default: 0 },
+    isComplete: { type: Boolean, default: true },
+    limitReason: { type: String, default: null },
+  },
+  formulaWarnings: [{
+    type: String,
+  }],
+  wordCount: {
+    type: Number,
+    default: 0,
+  },
+  tokenCount: {
+    type: Number,
+    default: 0,
+  },
+  extractedText: {
+    type: String,
+    default: '',
+  },
+  canonicalContent: {
+    type: String,
+    default: '',
+  },
+  rawTableData: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null,
+  },
+  visualImageUrls: [{
+    type: String,
+  }],
+});
+
 const AnalyzeFileSchema = new mongoose.Schema(
   {
     userId: {
@@ -192,6 +263,8 @@ const AnalyzeFileSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    // Multi-file support: stores up to 5 uploaded files in this session
+    files: [AnalyzeSingleFileItemSchema],
     messages: [AnalyzeFileMessageSchema],
     telemetry: [AnalyzeFileTelemetrySchema],
   },
