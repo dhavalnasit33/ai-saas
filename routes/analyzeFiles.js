@@ -401,7 +401,7 @@ router.get("/chats", protect, async (req, res) => {
     });
     const chats = await AnalyzeFile.find({ userId, status: "READY" })
       .select(
-        "_id title originalFileName fileType fileSize rowCount pageCount createdAt updatedAt",
+        "_id title originalFileName fileType fileSize rowCount pageCount files.originalFileName files.fileType files.fileSize files.fileUrl createdAt updatedAt",
       )
       .sort({ updatedAt: -1, createdAt: -1 })
       .skip(skip)
@@ -562,15 +562,32 @@ router.delete("/chats/:id", protect, async (req, res) => {
         .json({ success: false, message: "Chat session not found" });
     }
 
-    // Attempt clean up of file on disk safely within the uploads folder
+    // Clean up all files associated with this chat from disk safely
+    const filesToDelete = [];
     if (chat.fileUrl && typeof chat.fileUrl === "string") {
-      const sanitizedBase = path.basename(chat.fileUrl);
-      const diskPath = path.join(analyzeFilesUploadsDir, sanitizedBase);
-      if (
-        diskPath.startsWith(analyzeFilesUploadsDir) &&
-        fs.existsSync(diskPath)
-      ) {
-        fs.unlink(diskPath, () => {});
+      filesToDelete.push(chat.fileUrl);
+    }
+    if (Array.isArray(chat.files)) {
+      chat.files.forEach((f) => {
+        if (f && f.fileUrl && typeof f.fileUrl === "string") {
+          filesToDelete.push(f.fileUrl);
+        }
+      });
+    }
+
+    const uniqueFileUrls = [...new Set(filesToDelete)];
+    for (const url of uniqueFileUrls) {
+      try {
+        const sanitizedBase = path.basename(url);
+        const diskPath = path.join(analyzeFilesUploadsDir, sanitizedBase);
+        if (
+          diskPath.startsWith(analyzeFilesUploadsDir) &&
+          fs.existsSync(diskPath)
+        ) {
+          fs.unlinkSync(diskPath);
+        }
+      } catch (unlinkErr) {
+        console.warn(`Could not delete file ${url} from disk:`, unlinkErr.message);
       }
     }
 
