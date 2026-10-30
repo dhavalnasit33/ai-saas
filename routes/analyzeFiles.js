@@ -733,7 +733,7 @@ Your goal is to provide accurate, useful analysis—not simply attractive visual
 - Visual Analysis: Use appropriate charts, tables, or metric cards when helpful.
 - Explanation: Explain what the results mean in simple language.
 - Important Notes: Mention missing data, assumptions, incomplete coverage, or calculation limitations.
-- Related Queries: Conclude substantive analytical overviews with 3 to 4 insightful follow-up action questions with '+' icons. NEVER create empty, placeholder, or blank accordion sections.
+- Related Questions: Conclude substantive analytical overviews with 4 insightful, concise follow-up questions under 'Related Questions'. NEVER create empty, placeholder, or blank accordion sections.
 7. Proactive Insights
 - When analyzing a file, look for useful information beyond the user's immediate question, staying relevant.
 - Clearly distinguish confirmed findings from possible explanations. Do not invent reasons for trends without evidence.
@@ -785,7 +785,7 @@ Your goal is to provide accurate, useful analysis—not simply attractive visual
 - Primary Visualization & Charts: Render crisp, high-contrast Bar Charts, Line Charts, or Scatter Plots with clear axes, units, legends, and hover tooltips. For multi-file datasets, render comparative visualizations and charts highlighting key distributions, trends, or correlations across the different files.
 - Visual Detail Cards Grid & Cross-File Breakdown: A 2-column or multi-column grid of cards or table featuring observations, metrics, and badges for ALL uploaded files.
 - Structured Data Table: Clean, formatted table with Rank, Item, Category, and colored score/status badges (e.g., [96 / 100], [Strong], [High]).
-- Related Queries (INTERACTIVE THESYS COMPONENT): Conclude substantive analytical overviews with an interactive FollowUpBlock or Accordion component featuring 4 insightful follow-up questions. NEVER output plain unstyled markdown bullet points (<ul><li>) for Related Queries.
+- Related Questions (INTERACTIVE THESYS COMPONENT): Conclude substantive analytical overviews with an interactive Accordion or FollowUpBlock component under 'Related Questions' featuring 4 insightful, natural follow-up questions. NEVER output plain unstyled markdown bullet points for Related Questions.
 22. Domain-Aware Analytical Patterns
 - Marketing: Channels, CAC, ROAS, visitors, conversion rates, ad spend.
 - Finance: Revenue, expenses, gross/net margin, cash flow, period comparisons.
@@ -1125,7 +1125,7 @@ Format the output with Thesys Generative UI components:
    - Provide structured detail cards and tables explicitly breaking down key findings, metrics, and status for EACH of the ${allFiles.length} uploaded files.
    - For every file, explicitly state its key takeaway, critical figures, and status.
 5. Cross-File Correlations & Key Takeaways: Explain how the data across these files connect and suggest actionable insights.
-6. Related Queries: 4 insightful, actionable follow-up questions with '+' icons covering questions across different files.
+6. Related Questions: 4 insightful, actionable follow-up questions covering questions across different files.
 CRITICAL: Ground all numbers, entities, and labels 100% in the uploaded files. Ensure EVERY uploaded file has its metrics and findings clearly represented.`;
       } else {
         thesysEnforcedPrompt = `${prompt}
@@ -1136,12 +1136,12 @@ Analyze the file content intelligently and dynamically adapt your response to th
   2. 4 Top KPI Metric Cards: Verified key metrics with icons, bold values, and percentage trend indicators (+X% YoY or baseline).
   3. Primary Visual Chart: High-contrast Bar Chart, Line Chart, or Scatter plot based on what best explains the data.
   4. 2-Column Detail Cards Grid & Breakdown Table: Present key drivers and structured ranked data with colored status badges (e.g. [Strong], [High], [Score/100]).
-  5. Related Queries: 4 insightful, natural follow-up questions with '+' icons.
+  5. Related Questions: 4 insightful, natural follow-up questions.
 - FOR DOCUMENTS, TEXT, PDFS, OR NON-QUANTITATIVE FILES (Agreements, articles, policies, meeting notes, resumes):
   1. Executive Summary: Core message, key highlights, and document purpose.
   2. Key Takeaways & Evidence: Structured sections, bullet points, or comparison tables of terms/clauses.
   3. Do NOT force numerical charts or empty KPI cards where data does not exist. Use clean text-first presentation with structured cards/tables only when meaningful.
-  4. Related Queries: 3-4 natural follow-up questions about the document content.
+  4. Related Questions: 3-4 natural follow-up questions about the document content.
 CRITICAL: Ground all numbers, entities, and labels 100% in the current file context. Never invent figures.`;
       }
     } else {
@@ -1164,7 +1164,7 @@ The user has asked a specific question or requested a particular analysis.
    - Correlation / Relationship Chart: Scatter plot showing distribution and correlation.
    - Channel / Segment Breakdown Cards: 2x2 Grid of detail cards with icons, metric highlights, and trend badges.
    - Key Insights Callout & Summary Table: Highlighted findings with a structured breakdown table using colored status badges ([Strong], [Good], [Peak]).
-   - Related Queries (MANDATORY): You MUST ALWAYS conclude the response with the expandable "Related Queries" accordion section containing 4 insightful follow-up questions with '+' icons. Never omit this closing accordion.
+   - Related Questions (MANDATORY): You MUST ALWAYS conclude the response with the 'Related Questions' accordion section containing 4 insightful follow-up questions. Never omit this closing accordion.
 CRITICAL: Ground all figures 100% in the uploaded data.`;
       }
     }
